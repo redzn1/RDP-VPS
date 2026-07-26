@@ -171,25 +171,7 @@ jobs:
           KEEP_ALIVE="${{ github.event.inputs.keep_alive_hours }}"
           START_TIME="$(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M:%S WIB')"
           END_TIME="$(TZ='Asia/Jakarta' date -d "+${KEEP_ALIVE} hours" '+%Y-%m-%d %H:%M:%S WIB')"
-          MESSAGE="╔══════════════════════════════╗
-        ║    🐧 *UBUNTU SERVER*       ║
-        ╚══════════════════════════════╝
-
-        🌍 IP Tailscale: ${TS_IP}
-        👤 User: root
-        🔑 Password: ${ROOT_PASS}
-        ⏱️ Durasi: ${KEEP_ALIVE} jam
-
-        ─────────────────────────────
-        📅 Mulai: ${START_TIME}
-        ⏱️ Berakhir: ${END_TIME}
-        ─────────────────────────────
-
-        💻 SSH Command:
-        ssh -o StrictHostKeyChecking=no root@${TS_IP}
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        ⚠️ Jangan bagikan informasi ini ke siapapun!"
+          MESSAGE="╔══════════════════════════════╗%0A║    🐧 *UBUNTU SERVER*       ║%0A╚══════════════════════════════╝%0A%0A🌍 IP Tailscale: ${TS_IP}%0A👤 User: root%0A🔑 Password: ${ROOT_PASS}%0A⏱️ Durasi: ${KEEP_ALIVE} jam%0A%0A─────────────────────────────%0A📅 Mulai: ${START_TIME}%0A⏱️ Berakhir: ${END_TIME}%0A─────────────────────────────%0A%0A💻 SSH Command:%0Assh -o StrictHostKeyChecking=no root@${TS_IP}%0A%0A━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%0A⚠️ Jangan bagikan informasi ini ke siapapun!"
           echo "Mengirim notifikasi ke WhatsApp Grup via Fonnte..."
           echo "Target: ${WA_TARGET}"
           RESPONSE=$(curl -s -X POST "https://api.fonnte.com/send" \
