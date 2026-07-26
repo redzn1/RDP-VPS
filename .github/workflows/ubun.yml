@@ -1,16 +1,34 @@
 name: Ubuntu Server CI (VPS Mode via Tailscale)
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      root_password:
+        description: 'Password untuk root user'
+        required: true
+        default: 'redz'
+        type: string
+      tailscale_auth_key:
+        description: 'Tailscale Auth Key (format: tskey-auth-xxxxx)'
+        required: true
+        type: string
+      keep_alive_hours:
+        description: 'Durasi VPS aktif (jam)'
+        required: false
+        default: '6'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+          - '6'
+          - '12'
+          - '24'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # Maks 6 jam (batas GitHub Actions)
+    timeout-minutes: 1440   # Maks 24 jam
 
     steps:
       - name: Checkout repository
@@ -26,8 +44,8 @@ jobs:
       - name: Update package list
         run: sudo apt-get update
 
-      - name: Install tools (neofetch, sudo, nano, htop, openssh-server, curl)
-        run: sudo apt-get install -y neofetch sudo nano htop openssh-server curl
+      - name: Install tools (neofetch, sudo, nano, htop, openssh-server, curl, jq)
+        run: sudo apt-get install -y neofetch sudo nano htop openssh-server curl jq
 
       - name: Show system info
         run: neofetch --stdout
@@ -47,11 +65,11 @@ jobs:
           
           echo "✅ Hostname berhasil diubah menjadi: $(hostname)"
 
-      - name: Change root password to "redz"
+      - name: Change root password
         run: |
           echo "Mengganti password root..."
-          echo "root:redz" | sudo chpasswd
-          echo "✅ Password root berhasil diganti menjadi 'redz'"
+          echo "root:${{ github.event.inputs.root_password }}" | sudo chpasswd
+          echo "✅ Password root berhasil diganti"
 
       - name: Configure SSH server
         run: |
@@ -74,12 +92,11 @@ jobs:
           echo "✅ Tailscale terinstall"
 
       - name: Connect to Tailscale network
-        env:
-          TS_AUTH_KEY: ${{ secrets.TS_WIN_KEY }}
         run: |
+          TS_AUTH_KEY="${{ github.event.inputs.tailscale_auth_key }}"
+          
           if [ -z "$TS_AUTH_KEY" ]; then
-            echo "❌ TS_WIN_KEY tidak ditemukan di secrets!"
-            echo "Silakan tambahkan TS_WIN_KEY ke GitHub Secrets"
+            echo "❌ Tailscale Auth Key tidak boleh kosong!"
             exit 1
           fi
           
@@ -119,14 +136,22 @@ jobs:
           
           echo "TS_IP=${TS_IP}" >> $GITHUB_ENV
           
+          echo "╔══════════════════════════════════════════╗"
+          echo "║    🐧 UBUNTU SERVER                     ║"
+          echo "╚══════════════════════════════════════════╝"
+          echo ""
+          echo "🌍 IP Tailscale: ${TS_IP}"
+          echo "👤 User: root"
+          echo "🔑 Password: ${{ github.event.inputs.root_password }}"
+          echo "⏱️ Durasi: ${{ github.event.inputs.keep_alive_hours }} jam"
+          echo ""
           echo "========================================="
-          echo "   VPS SEMENTARA SIAP DIGUNAKAN"
+          echo "📅 Mulai: $(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M:%S WIB')"
+          echo "⏱️ Berakhir: $(TZ='Asia/Jakarta' date -d "+${{ github.event.inputs.keep_alive_hours }} hours" '+%Y-%m-%d %H:%M:%S WIB')"
           echo "========================================="
-          echo " Hostname:      cloudvpss"
-          echo " Tailscale IP:  ${TS_IP}"
-          echo " SSH command:   ssh root@${TS_IP}"
-          echo " Password root: redz"
-          echo "========================================="
+          echo ""
+          echo "💻 SSH Command:"
+          echo "ssh -o StrictHostKeyChecking=no root@${TS_IP}"
 
       - name: Test SSH connection
         run: |
@@ -160,80 +185,163 @@ jobs:
           
           echo "CONNECTION_STATUS=${CONNECTION_STATUS}" >> $GITHUB_ENV
 
-      - name: Send VPS info to Telegram
+      - name: Send notification to WhatsApp via Fonnte
         if: success() && env.CONNECTION_STATUS == 'success'
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FONNTE_TOKEN: ${{ secrets.FONNTE_TOKEN }}
+          WA_TARGET: ${{ secrets.WA_TARGET }}
         run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "⚠️ Telegram credentials not found in secrets. Skipping notification."
+          if [ -z "$FONNTE_TOKEN" ] || [ -z "$WA_TARGET" ]; then
+            echo "⚠️ FONNTE_TOKEN atau WA_TARGET tidak ditemukan di secrets!"
+            echo "⚠️ Melewati pengiriman notifikasi WhatsApp"
             exit 0
           fi
           
           TS_IP="${TS_IP:-$(sudo tailscale ip -4)}"
+          ROOT_PASS="${{ github.event.inputs.root_password }}"
+          KEEP_ALIVE="${{ github.event.inputs.keep_alive_hours }}"
+          START_TIME="$(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M:%S WIB')"
+          END_TIME="$(TZ='Asia/Jakarta' date -d "+${KEEP_ALIVE} hours" '+%Y-%m-%d %H:%M:%S WIB')"
           
-          MESSAGE="🚀 *VPS SEMENTARA AKTIF!*
-          
-          ━━━━━━━━━━━━━━━━━━━━━━━
-          📌 *Informasi Koneksi:*
-          
-          🖥️ *Hostname:* cloudvpss
-          🔗 *Network:* Tailscale VPN
-          📍 *Tailscale IP:* \`${TS_IP}\`
-          👤 *Username:* \`root\`
-          🔒 *Password:* \`redz\`
-          
-          ─────────────────────
-          💻 *SSH Command:*
-          \`\`\`
-          ssh -o StrictHostKeyChecking=no root@${TS_IP}
-          \`\`\`
-          
-          ─────────────────────
-          ⏰ *Server aktif hingga 6 jam*
-          📅 *Mulai:* $(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M:%S WIB')
-          ⏱️ *Timeout:* 6 jam dari sekarang
-          
-          ━━━━━━━━━━━━━━━━━━━━━━━
-          ⚠️ *Jangan bagikan informasi ini ke siapapun!*
-          
-          📝 *Catatan:* 
-          • Pastikan perangkat Anda terhubung ke Tailscale
-          • Gunakan IP ini untuk mengakses VPS
-          • Password root: redz"
-          
-          # Kirim pesan ke Telegram dengan format Markdown
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="${MESSAGE}" \
-            -d parse_mode="Markdown" \
-            -d disable_web_page_preview="true"
-          
-          echo "✅ Informasi VPS telah dikirim ke Telegram"
+          # Format pesan sesuai permintaan
+          MESSAGE="╔══════════════════════════════╗
+║    🐧 *UBUNTU SERVER*       ║
+╚══════════════════════════════╝
 
-      - name: Keep alive (jangan biarkan job selesai)
-        run: |
-          echo "Menjaga VPS tetap hidup..."
-          echo "VPS dapat diakses di Tailscale IP: $TS_IP"
-          echo "SSH: ssh -o StrictHostKeyChecking=no root@$TS_IP (password: redz)"
-          echo "Menunggu hingga timeout (6 jam) atau workflow dibatalkan..."
+🌍 IP Tailscale: ${TS_IP}
+👤 User: root
+🔑 Password: ${ROOT_PASS}
+⏱️ Durasi: ${KEEP_ALIVE} jam
+
+─────────────────────────────
+📅 Mulai: ${START_TIME}
+⏱️ Berakhir: ${END_TIME}
+─────────────────────────────
+
+💻 SSH Command:
+ssh -o StrictHostKeyChecking=no root@${TS_IP}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ Jangan bagikan informasi ini ke siapapun!"
           
-          # Loop tak terbatas untuk menjaga job tetap berjalan
+          # Kirim via Fonnte API
+          echo "Mengirim notifikasi ke WhatsApp Grup via Fonnte..."
+          echo "Target: ${WA_TARGET}"
+          
+          RESPONSE=$(curl -s -X POST "https://api.fonnte.com/send" \
+            -H "Authorization: ${FONNTE_TOKEN}" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "target=${WA_TARGET}" \
+            -d "message=${MESSAGE}" \
+            -d "countryCode=62" \
+            -d "delay=2")
+          
+          # Cek response
+          if echo "$RESPONSE" | grep -q '"status":true'; then
+            echo "✅ Notifikasi WhatsApp berhasil dikirim ke grup"
+            echo "📱 Target: ${WA_TARGET}"
+          else
+            echo "❌ Gagal mengirim notifikasi WhatsApp"
+            echo "Response: $RESPONSE"
+            echo ""
+            echo "💡 Informasi VPS tetap bisa diakses:"
+            echo "   ssh -o StrictHostKeyChecking=no root@${TS_IP}"
+            echo "   Password: ${ROOT_PASS}"
+          fi
+
+      - name: Keep alive until GitHub Actions timeout
+        if: success() && env.CONNECTION_STATUS == 'success'
+        run: |
+          KEEP_ALIVE_HOURS="${{ github.event.inputs.keep_alive_hours }}"
+          # Konversi jam ke detik (dikurangi 5 menit untuk safety)
+          KEEP_ALIVE_SECONDS=$((KEEP_ALIVE_HOURS * 3600 - 300))
+          
+          echo ""
+          echo "╔══════════════════════════════════════════╗"
+          echo "║    🐧 UBUNTU SERVER AKTIF!              ║"
+          echo "╚══════════════════════════════════════════╝"
+          echo ""
+          echo "🌍 IP Tailscale: $TS_IP"
+          echo "👤 User: root"
+          echo "🔑 Password: ${{ github.event.inputs.root_password }}"
+          echo "⏱️ Durasi: ${KEEP_ALIVE_HOURS} jam"
+          echo ""
+          echo "💻 SSH Command:"
+          echo "ssh -o StrictHostKeyChecking=no root@$TS_IP"
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "⏳ Menjaga VPS tetap hidup..."
+          echo "═══════════════════════════════════════════"
+          
+          START_TIME=$(date +%s)
+          END_TIME=$((START_TIME + KEEP_ALIVE_SECONDS))
+          
+          # Hitung total menit untuk progress
+          TOTAL_MINUTES=$((KEEP_ALIVE_SECONDS / 60))
+          CURRENT_MINUTE=0
+          
           while true; do
+            CURRENT_TIME=$(date +%s)
+            REMAINING=$((END_TIME - CURRENT_TIME))
+            
+            if [ $REMAINING -le 0 ]; then
+              echo ""
+              echo "═══════════════════════════════════════════"
+              echo "⏰ Waktu aktif ${KEEP_ALIVE_HOURS} jam telah habis!"
+              echo "Menutup VPS..."
+              echo "═══════════════════════════════════════════"
+              break
+            fi
+            
+            # Tampilkan progress setiap menit
+            CURRENT_MINUTE=$((CURRENT_MINUTE + 1))
+            REMAINING_MIN=$((REMAINING / 60))
+            REMAINING_HOURS=$((REMAINING_MIN / 60))
+            REMAINING_MINS=$((REMAINING_MIN % 60))
+            
+            # Progress bar sederhana
+            PROGRESS=$((CURRENT_MINUTE * 100 / TOTAL_MINUTES))
+            BAR_LENGTH=50
+            FILLED=$((PROGRESS * BAR_LENGTH / 100))
+            EMPTY=$((BAR_LENGTH - FILLED))
+            
+            # Cetak setiap menit
+            printf "\r⏳ ["
+            printf "%${FILLED}s" | tr ' ' '='
+            printf "%${EMPTY}s" | tr ' ' ' '
+            printf "] %3d%% | Sisa: %02d:%02d:%02d   " \
+              $PROGRESS \
+              $REMAINING_HOURS \
+              $((REMAINING_MIN % 60)) \
+              $((REMAINING % 60))
+            
             # Cek apakah Tailscale masih berjalan
             if ! sudo tailscale status &>/dev/null; then
+              echo ""
               echo "❌ Tailscale terputus, mencoba reconnect..."
-              sudo tailscale up --auth-key="${TS_WIN_KEY}" --hostname="cloudvpss"
+              TS_AUTH_KEY="${{ github.event.inputs.tailscale_auth_key }}"
+              sudo tailscale up --auth-key="${TS_AUTH_KEY}" --hostname="cloudvpss"
               sleep 5
+              
+              # Update IP jika berubah
+              NEW_TS_IP=$(sudo tailscale ip -4)
+              if [ -n "$NEW_TS_IP" ] && [ "$NEW_TS_IP" != "$TS_IP" ]; then
+                echo "⚠️ IP Tailscale berubah menjadi: ${NEW_TS_IP}"
+                echo "TS_IP=${NEW_TS_IP}" >> $GITHUB_ENV
+                TS_IP=$NEW_TS_IP
+              fi
             fi
+            
             sleep 60
           done
 
-      - name: Cleanup on failure
-        if: failure()
+      - name: Cleanup
+        if: always()
         run: |
+          echo ""
+          echo "═══════════════════════════════════════════"
           echo "Membersihkan koneksi Tailscale..."
           sudo tailscale logout || true
           sudo tailscale down || true
-          echo "✅ Cleanup selesai"
+          echo "✅ VPS telah ditutup dan dibersihkan"
+          echo "═══════════════════════════════════════════"
