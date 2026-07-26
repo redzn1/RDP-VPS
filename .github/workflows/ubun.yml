@@ -1,0 +1,239 @@
+name: Ubuntu Server CI (VPS Mode via Tailscale)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # Maks 6 jam (batas GitHub Actions)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Ubuntu version
+        run: |
+          echo "=== Ubuntu Version ==="
+          lsb_release -a
+          echo "=== Kernel Info ==="
+          uname -a
+
+      - name: Update package list
+        run: sudo apt-get update
+
+      - name: Install tools (neofetch, sudo, nano, htop, openssh-server, curl)
+        run: sudo apt-get install -y neofetch sudo nano htop openssh-server curl
+
+      - name: Show system info
+        run: neofetch --stdout
+
+      - name: Set hostname to cloudvpss
+        run: |
+          echo "Mengatur hostname ke cloudvpss..."
+          sudo hostnamectl set-hostname cloudvpss
+          
+          # Update /etc/hosts agar hostname baru dikenali
+          sudo sed -i "s/127.0.1.1.*/127.0.1.1 cloudvpss/" /etc/hosts
+          
+          # Jika baris 127.0.1.1 belum ada, tambahkan
+          if ! grep -q "127.0.1.1" /etc/hosts; then
+            echo "127.0.1.1 cloudvpss" | sudo tee -a /etc/hosts
+          fi
+          
+          echo "✅ Hostname berhasil diubah menjadi: $(hostname)"
+
+      - name: Change root password to "redz"
+        run: |
+          echo "Mengganti password root..."
+          echo "root:redz" | sudo chpasswd
+          echo "✅ Password root berhasil diganti menjadi 'redz'"
+
+      - name: Configure SSH server
+        run: |
+          echo "Mengkonfigurasi SSH server..."
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#Port 22/Port 22/' /etc/ssh/sshd_config
+          
+          # Tambahkan konfigurasi untuk Tailscale
+          echo "AllowUsers root" | sudo tee -a /etc/ssh/sshd_config
+          
+          sudo systemctl restart ssh
+          echo "✅ SSH server dikonfigurasi dan direstart"
+          sudo systemctl status ssh --no-pager
+
+      - name: Install Tailscale
+        run: |
+          echo "Menginstall Tailscale..."
+          curl -fsSL https://tailscale.com/install.sh | sh
+          echo "✅ Tailscale terinstall"
+
+      - name: Connect to Tailscale network
+        env:
+          TS_AUTH_KEY: ${{ secrets.TS_WIN_KEY }}
+        run: |
+          if [ -z "$TS_AUTH_KEY" ]; then
+            echo "❌ TS_WIN_KEY tidak ditemukan di secrets!"
+            echo "Silakan tambahkan TS_WIN_KEY ke GitHub Secrets"
+            exit 1
+          fi
+          
+          echo "Menghubungkan ke Tailscale network..."
+          sudo tailscale up --auth-key="${TS_AUTH_KEY}" --hostname="cloudvpss"
+          
+          # Tunggu koneksi Tailscale stabil
+          sleep 5
+          
+          # Dapatkan IP Tailscale
+          TS_IP=$(sudo tailscale ip -4)
+          
+          if [ -z "$TS_IP" ]; then
+            echo "❌ Gagal mendapatkan IP Tailscale"
+            sudo tailscale status
+            exit 1
+          fi
+          
+          echo "✅ Tailscale connected!"
+          echo "Tailscale IP: ${TS_IP}"
+          echo "TS_IP=${TS_IP}" >> $GITHUB_ENV
+          
+          # Tampilkan status Tailscale
+          echo "=== Tailscale Status ==="
+          sudo tailscale status
+
+      - name: Get Tailscale IP and prepare connection info
+        id: tailscale
+        run: |
+          # Pastikan Tailscale sudah connect
+          TS_IP=$(sudo tailscale ip -4)
+          
+          if [ -z "$TS_IP" ]; then
+            echo "❌ Tailscale IP tidak ditemukan"
+            exit 1
+          fi
+          
+          echo "TS_IP=${TS_IP}" >> $GITHUB_ENV
+          
+          echo "========================================="
+          echo "   VPS SEMENTARA SIAP DIGUNAKAN"
+          echo "========================================="
+          echo " Hostname:      cloudvpss"
+          echo " Tailscale IP:  ${TS_IP}"
+          echo " SSH command:   ssh root@${TS_IP}"
+          echo " Password root: redz"
+          echo "========================================="
+
+      - name: Test SSH connection
+        run: |
+          echo "Menguji koneksi SSH ke Tailscale IP..."
+          
+          # Tunggu SSH service siap
+          sleep 5
+          
+          # Test SSH connection
+          if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@${TS_IP} "echo 'SSH connection successful'" 2>/dev/null; then
+            echo "✅ Koneksi SSH ke Tailscale IP berhasil!"
+            CONNECTION_STATUS="success"
+          else
+            echo "⚠️ Koneksi SSH gagal, mencoba lagi dalam 10 detik..."
+            sleep 10
+            
+            if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@${TS_IP} "echo 'SSH connection successful'" 2>/dev/null; then
+              echo "✅ Koneksi SSH ke Tailscale IP berhasil!"
+              CONNECTION_STATUS="success"
+            else
+              echo "❌ Koneksi SSH masih gagal"
+              CONNECTION_STATUS="failed"
+              
+              # Cek status Tailscale dan SSH
+              echo "=== Tailscale Status ==="
+              sudo tailscale status
+              echo "=== SSH Service Status ==="
+              sudo systemctl status ssh --no-pager
+            fi
+          fi
+          
+          echo "CONNECTION_STATUS=${CONNECTION_STATUS}" >> $GITHUB_ENV
+
+      - name: Send VPS info to Telegram
+        if: success() && env.CONNECTION_STATUS == 'success'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "⚠️ Telegram credentials not found in secrets. Skipping notification."
+            exit 0
+          fi
+          
+          TS_IP="${TS_IP:-$(sudo tailscale ip -4)}"
+          
+          MESSAGE="🚀 *VPS SEMENTARA AKTIF!*
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━
+          📌 *Informasi Koneksi:*
+          
+          🖥️ *Hostname:* cloudvpss
+          🔗 *Network:* Tailscale VPN
+          📍 *Tailscale IP:* \`${TS_IP}\`
+          👤 *Username:* \`root\`
+          🔒 *Password:* \`redz\`
+          
+          ─────────────────────
+          💻 *SSH Command:*
+          \`\`\`
+          ssh -o StrictHostKeyChecking=no root@${TS_IP}
+          \`\`\`
+          
+          ─────────────────────
+          ⏰ *Server aktif hingga 6 jam*
+          📅 *Mulai:* $(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M:%S WIB')
+          ⏱️ *Timeout:* 6 jam dari sekarang
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━
+          ⚠️ *Jangan bagikan informasi ini ke siapapun!*
+          
+          📝 *Catatan:* 
+          • Pastikan perangkat Anda terhubung ke Tailscale
+          • Gunakan IP ini untuk mengakses VPS
+          • Password root: redz"
+          
+          # Kirim pesan ke Telegram dengan format Markdown
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="${MESSAGE}" \
+            -d parse_mode="Markdown" \
+            -d disable_web_page_preview="true"
+          
+          echo "✅ Informasi VPS telah dikirim ke Telegram"
+
+      - name: Keep alive (jangan biarkan job selesai)
+        run: |
+          echo "Menjaga VPS tetap hidup..."
+          echo "VPS dapat diakses di Tailscale IP: $TS_IP"
+          echo "SSH: ssh -o StrictHostKeyChecking=no root@$TS_IP (password: redz)"
+          echo "Menunggu hingga timeout (6 jam) atau workflow dibatalkan..."
+          
+          # Loop tak terbatas untuk menjaga job tetap berjalan
+          while true; do
+            # Cek apakah Tailscale masih berjalan
+            if ! sudo tailscale status &>/dev/null; then
+              echo "❌ Tailscale terputus, mencoba reconnect..."
+              sudo tailscale up --auth-key="${TS_WIN_KEY}" --hostname="cloudvpss"
+              sleep 5
+            fi
+            sleep 60
+          done
+
+      - name: Cleanup on failure
+        if: failure()
+        run: |
+          echo "Membersihkan koneksi Tailscale..."
+          sudo tailscale logout || true
+          sudo tailscale down || true
+          echo "✅ Cleanup selesai"
