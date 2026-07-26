@@ -28,7 +28,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 1440   # Maks 24 jam
+    timeout-minutes: 1440
 
     steps:
       - name: Checkout repository
@@ -44,7 +44,7 @@ jobs:
       - name: Update package list
         run: sudo apt-get update
 
-      - name: Install tools (neofetch, sudo, nano, htop, openssh-server, curl, jq)
+      - name: Install tools
         run: sudo apt-get install -y neofetch sudo nano htop openssh-server curl jq
 
       - name: Show system info
@@ -54,15 +54,10 @@ jobs:
         run: |
           echo "Mengatur hostname ke cloudvpss..."
           sudo hostnamectl set-hostname cloudvpss
-          
-          # Update /etc/hosts agar hostname baru dikenali
           sudo sed -i "s/127.0.1.1.*/127.0.1.1 cloudvpss/" /etc/hosts
-          
-          # Jika baris 127.0.1.1 belum ada, tambahkan
           if ! grep -q "127.0.1.1" /etc/hosts; then
             echo "127.0.1.1 cloudvpss" | sudo tee -a /etc/hosts
           fi
-          
           echo "✅ Hostname berhasil diubah menjadi: $(hostname)"
 
       - name: Change root password
@@ -77,10 +72,7 @@ jobs:
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo sed -i 's/#Port 22/Port 22/' /etc/ssh/sshd_config
-          
-          # Tambahkan konfigurasi untuk Tailscale
           echo "AllowUsers root" | sudo tee -a /etc/ssh/sshd_config
-          
           sudo systemctl restart ssh
           echo "✅ SSH server dikonfigurasi dan direstart"
           sudo systemctl status ssh --no-pager
@@ -94,48 +86,34 @@ jobs:
       - name: Connect to Tailscale network
         run: |
           TS_AUTH_KEY="${{ github.event.inputs.tailscale_auth_key }}"
-          
           if [ -z "$TS_AUTH_KEY" ]; then
             echo "❌ Tailscale Auth Key tidak boleh kosong!"
             exit 1
           fi
-          
           echo "Menghubungkan ke Tailscale network..."
           sudo tailscale up --auth-key="${TS_AUTH_KEY}" --hostname="cloudvpss"
-          
-          # Tunggu koneksi Tailscale stabil
           sleep 5
-          
-          # Dapatkan IP Tailscale
           TS_IP=$(sudo tailscale ip -4)
-          
           if [ -z "$TS_IP" ]; then
             echo "❌ Gagal mendapatkan IP Tailscale"
             sudo tailscale status
             exit 1
           fi
-          
           echo "✅ Tailscale connected!"
           echo "Tailscale IP: ${TS_IP}"
           echo "TS_IP=${TS_IP}" >> $GITHUB_ENV
-          
-          # Tampilkan status Tailscale
           echo "=== Tailscale Status ==="
           sudo tailscale status
 
       - name: Get Tailscale IP and prepare connection info
         id: tailscale
         run: |
-          # Pastikan Tailscale sudah connect
           TS_IP=$(sudo tailscale ip -4)
-          
           if [ -z "$TS_IP" ]; then
             echo "❌ Tailscale IP tidak ditemukan"
             exit 1
           fi
-          
           echo "TS_IP=${TS_IP}" >> $GITHUB_ENV
-          
           echo "╔══════════════════════════════════════════╗"
           echo "║    🐧 UBUNTU SERVER                     ║"
           echo "╚══════════════════════════════════════════╝"
@@ -156,33 +134,25 @@ jobs:
       - name: Test SSH connection
         run: |
           echo "Menguji koneksi SSH ke Tailscale IP..."
-          
-          # Tunggu SSH service siap
           sleep 5
-          
-          # Test SSH connection
           if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@${TS_IP} "echo 'SSH connection successful'" 2>/dev/null; then
             echo "✅ Koneksi SSH ke Tailscale IP berhasil!"
             CONNECTION_STATUS="success"
           else
             echo "⚠️ Koneksi SSH gagal, mencoba lagi dalam 10 detik..."
             sleep 10
-            
             if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no root@${TS_IP} "echo 'SSH connection successful'" 2>/dev/null; then
               echo "✅ Koneksi SSH ke Tailscale IP berhasil!"
               CONNECTION_STATUS="success"
             else
               echo "❌ Koneksi SSH masih gagal"
               CONNECTION_STATUS="failed"
-              
-              # Cek status Tailscale dan SSH
               echo "=== Tailscale Status ==="
               sudo tailscale status
               echo "=== SSH Service Status ==="
               sudo systemctl status ssh --no-pager
             fi
           fi
-          
           echo "CONNECTION_STATUS=${CONNECTION_STATUS}" >> $GITHUB_ENV
 
       - name: Send notification to WhatsApp via Fonnte
@@ -196,38 +166,32 @@ jobs:
             echo "⚠️ Melewati pengiriman notifikasi WhatsApp"
             exit 0
           fi
-          
           TS_IP="${TS_IP:-$(sudo tailscale ip -4)}"
           ROOT_PASS="${{ github.event.inputs.root_password }}"
           KEEP_ALIVE="${{ github.event.inputs.keep_alive_hours }}"
           START_TIME="$(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M:%S WIB')"
           END_TIME="$(TZ='Asia/Jakarta' date -d "+${KEEP_ALIVE} hours" '+%Y-%m-%d %H:%M:%S WIB')"
-          
-          # Format pesan sesuai permintaan
           MESSAGE="╔══════════════════════════════╗
-║    🐧 *UBUNTU SERVER*       ║
-╚══════════════════════════════╝
+        ║    🐧 *UBUNTU SERVER*       ║
+        ╚══════════════════════════════╝
 
-🌍 IP Tailscale: ${TS_IP}
-👤 User: root
-🔑 Password: ${ROOT_PASS}
-⏱️ Durasi: ${KEEP_ALIVE} jam
+        🌍 IP Tailscale: ${TS_IP}
+        👤 User: root
+        🔑 Password: ${ROOT_PASS}
+        ⏱️ Durasi: ${KEEP_ALIVE} jam
 
-─────────────────────────────
-📅 Mulai: ${START_TIME}
-⏱️ Berakhir: ${END_TIME}
-─────────────────────────────
+        ─────────────────────────────
+        📅 Mulai: ${START_TIME}
+        ⏱️ Berakhir: ${END_TIME}
+        ─────────────────────────────
 
-💻 SSH Command:
-ssh -o StrictHostKeyChecking=no root@${TS_IP}
+        💻 SSH Command:
+        ssh -o StrictHostKeyChecking=no root@${TS_IP}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ Jangan bagikan informasi ini ke siapapun!"
-          
-          # Kirim via Fonnte API
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        ⚠️ Jangan bagikan informasi ini ke siapapun!"
           echo "Mengirim notifikasi ke WhatsApp Grup via Fonnte..."
           echo "Target: ${WA_TARGET}"
-          
           RESPONSE=$(curl -s -X POST "https://api.fonnte.com/send" \
             -H "Authorization: ${FONNTE_TOKEN}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
@@ -235,8 +199,6 @@ ssh -o StrictHostKeyChecking=no root@${TS_IP}
             -d "message=${MESSAGE}" \
             -d "countryCode=62" \
             -d "delay=2")
-          
-          # Cek response
           if echo "$RESPONSE" | grep -q '"status":true'; then
             echo "✅ Notifikasi WhatsApp berhasil dikirim ke grup"
             echo "📱 Target: ${WA_TARGET}"
@@ -253,9 +215,7 @@ ssh -o StrictHostKeyChecking=no root@${TS_IP}
         if: success() && env.CONNECTION_STATUS == 'success'
         run: |
           KEEP_ALIVE_HOURS="${{ github.event.inputs.keep_alive_hours }}"
-          # Konversi jam ke detik (dikurangi 5 menit untuk safety)
           KEEP_ALIVE_SECONDS=$((KEEP_ALIVE_HOURS * 3600 - 300))
-          
           echo ""
           echo "╔══════════════════════════════════════════╗"
           echo "║    🐧 UBUNTU SERVER AKTIF!              ║"
@@ -272,18 +232,13 @@ ssh -o StrictHostKeyChecking=no root@${TS_IP}
           echo "═══════════════════════════════════════════"
           echo "⏳ Menjaga VPS tetap hidup..."
           echo "═══════════════════════════════════════════"
-          
           START_TIME=$(date +%s)
           END_TIME=$((START_TIME + KEEP_ALIVE_SECONDS))
-          
-          # Hitung total menit untuk progress
           TOTAL_MINUTES=$((KEEP_ALIVE_SECONDS / 60))
           CURRENT_MINUTE=0
-          
           while true; do
             CURRENT_TIME=$(date +%s)
             REMAINING=$((END_TIME - CURRENT_TIME))
-            
             if [ $REMAINING -le 0 ]; then
               echo ""
               echo "═══════════════════════════════════════════"
@@ -292,20 +247,14 @@ ssh -o StrictHostKeyChecking=no root@${TS_IP}
               echo "═══════════════════════════════════════════"
               break
             fi
-            
-            # Tampilkan progress setiap menit
             CURRENT_MINUTE=$((CURRENT_MINUTE + 1))
             REMAINING_MIN=$((REMAINING / 60))
             REMAINING_HOURS=$((REMAINING_MIN / 60))
             REMAINING_MINS=$((REMAINING_MIN % 60))
-            
-            # Progress bar sederhana
             PROGRESS=$((CURRENT_MINUTE * 100 / TOTAL_MINUTES))
             BAR_LENGTH=50
             FILLED=$((PROGRESS * BAR_LENGTH / 100))
             EMPTY=$((BAR_LENGTH - FILLED))
-            
-            # Cetak setiap menit
             printf "\r⏳ ["
             printf "%${FILLED}s" | tr ' ' '='
             printf "%${EMPTY}s" | tr ' ' ' '
@@ -314,16 +263,12 @@ ssh -o StrictHostKeyChecking=no root@${TS_IP}
               $REMAINING_HOURS \
               $((REMAINING_MIN % 60)) \
               $((REMAINING % 60))
-            
-            # Cek apakah Tailscale masih berjalan
             if ! sudo tailscale status &>/dev/null; then
               echo ""
               echo "❌ Tailscale terputus, mencoba reconnect..."
               TS_AUTH_KEY="${{ github.event.inputs.tailscale_auth_key }}"
               sudo tailscale up --auth-key="${TS_AUTH_KEY}" --hostname="cloudvpss"
               sleep 5
-              
-              # Update IP jika berubah
               NEW_TS_IP=$(sudo tailscale ip -4)
               if [ -n "$NEW_TS_IP" ] && [ "$NEW_TS_IP" != "$TS_IP" ]; then
                 echo "⚠️ IP Tailscale berubah menjadi: ${NEW_TS_IP}"
@@ -331,7 +276,6 @@ ssh -o StrictHostKeyChecking=no root@${TS_IP}
                 TS_IP=$NEW_TS_IP
               fi
             fi
-            
             sleep 60
           done
 
