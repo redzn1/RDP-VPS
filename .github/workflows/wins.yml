@@ -4,15 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       username:
-        description: 'Username untuk akun RDP (Administrator)'
+        description: 'Username untuk akun RDP'
         required: true
         default: 'Administrator'
       password:
-        description: 'Password untuk akun RDP (Administrator & runneradmin)'
+        description: 'Password untuk akun RDP'
         required: true
         default: 'Redz132_'
-  schedule:
-    - cron: '59 5 * * *'  # Setiap hari jam 05:59 UTC
+      tailscale_key:
+        description: 'Tailscale Auth Key (kosongkan untuk pakai secret default)'
+        required: false
+        default: ''
 
 jobs:
   winser-2025:
@@ -20,51 +22,6 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: 📢 Kirim Info RDP Akan Mati & Auto Re-run
-        shell: pwsh
-        run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║      SISTEM INFORMASI RDP MATI           ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
-          
-          $botToken = "8677753903:AAEkqOmwHWMyYzH5BxkLblVNidOr33AMvdA"
-          $chatID = "8756360315"
-          
-          # Cek apakah ini scheduled run
-          if ("${{ github.event_name }}" -eq "schedule") {
-              Write-Host "⏰ Scheduled run terdeteksi - mengirim info RDP mati..."
-              
-              $message = @"
-          ⚠️ Informasi TheRDP Bot ⚠️
-          
-          RDP Telah Mati 💀
-          
-          ⏰ Waktu: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-          
-          Otomatis Re-run dalam 5 detik...
-          
-          Harap tunggu informasi baru setelah re-run selesai.
-          "@
-              
-              $uri = "https://api.telegram.org/bot$botToken/sendMessage"
-              $body = @{
-                  chat_id = $chatID
-                  text    = $message
-              } | ConvertTo-Json -Compress
-              
-              try {
-                  $response = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType "application/json; charset=utf-8"
-                  Write-Host "✅ Info RDP mati terkirim ke Telegram!"
-              } catch {
-                  Write-Warning "⚠️ Gagal kirim info ke Telegram: $_"
-              }
-              
-              Write-Host "⏳ Menunggu 5 detik sebelum re-run..."
-              Start-Sleep -Seconds 5
-          } else {
-              Write-Host "✅ Manual run terdeteksi - skip info mati"
-          }
-
       - name: 🖥️ Install Virtual Display Driver
         shell: pwsh
         run: |
@@ -159,7 +116,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $runnerUser -ErrorAction SilentlyContinue
           Write-Host "✅ runneradmin password diupdate."
 
-          Write-Host "Semua user menggunakan password yang kamu masukkan."
+          Write-Host "Semua user menggunakan password yang sama."
 
       - name: 🎮 Install OpenCL, OpenGL, & Vulkan Compatibility Pack
         shell: pwsh
@@ -271,19 +228,34 @@ jobs:
           Write-Host "✅ Tailscale terinstal."
 
       - name: 🌐 Tailscale Auth Key Login
+        shell: pwsh
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║     LOGIN TAILSCALE DENGAN AUTH KEY       ║"
           Write-Host "╚══════════════════════════════════════════════╝"
           
           $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          $authKey = "${{ secrets.TS_WIN_KEY }}"
+          
+          # Ambil auth key dari input workflow atau secret
+          $inputKey = "${{ github.event.inputs.tailscale_key }}"
+          $secretKey = "${{ secrets.TS_WIN_KEY }}"
+          
+          if ($inputKey -ne '') {
+              $authKey = $inputKey
+              Write-Host "🔑 Menggunakan Auth Key dari input manual"
+          } elseif ($secretKey -ne '') {
+              $authKey = $secretKey
+              Write-Host "🔑 Menggunakan Auth Key dari GitHub Secret"
+          } else {
+              Write-Error "❌ Tailscale Auth Key tidak ditemukan! Isi input atau set TS_WIN_KEY di secrets."
+              exit 1
+          }
           
           Write-Host "🔑 Mengautentikasi dengan Auth Key..."
           & $tsPath up --auth-key $authKey --hostname=wins-25-${{ github.run_number }} --accept-dns=false
           
           if ($LASTEXITCODE -ne 0) {
-              Write-Error "❌ Gagal autentikasi dengan Auth Key. Periksa kembali secret TS_WIN_KEY."
+              Write-Error "❌ Gagal autentikasi dengan Auth Key. Periksa kembali Auth Key."
               exit 1
           }
           
@@ -324,81 +296,11 @@ jobs:
           }
           Write-Host "✅ Port 3389 terbuka, RDP siap."
 
-      - name: 📤 Kirim Informasi ke Telegram
-        shell: pwsh
-        run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║      MENGIRIM INFO KE TELEGRAM BOT        ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
-          
-          $ip = $env:TAILSCALE_IP
-          $user1 = "${{ github.event.inputs.username }}"
-          $user2 = "runneradmin"
-          $pass = "${{ github.event.inputs.password }}"
-          
-          $botToken = "8677753903:AAEkqOmwHWMyYzH5BxkLblVNidOr33AMvdA"
-          $chatID = "8756360315"
-          
-          $message = @"
-          Informasi TheRDP Bot
-          
-          IP: $ip
-          User1: $user1
-          User2: $user2
-          Pass: $pass
-          
-          Hubungkan ke RD Client/Windows App
-          Selamat Mencoba
-          "@
-          
-          $uri = "https://api.telegram.org/bot$botToken/sendMessage"
-          $body = @{
-              chat_id = $chatID
-              text    = $message
-          } | ConvertTo-Json -Compress
-          
-          try {
-              $response = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType "application/json; charset=utf-8"
-              Write-Host "✅ Informasi berhasil dikirim ke Telegram!"
-          } catch {
-              Write-Warning "⚠️ Gagal mengirim ke Telegram: $_"
-              Write-Host "Melanjutkan workflow..."
-          }
-
       - name: ⏳ Maintain Connection
         run: |
           $ip = $env:TAILSCALE_IP
           $user = "${{ github.event.inputs.username }}"
           $pass = "${{ github.event.inputs.password }}"
-          
-          # Kirim info RDP siap ke Telegram (untuk scheduled re-run)
-          $botToken = "8677753903:AAEkqOmwHWMyYzH5BxkLblVNidOr33AMvdA"
-          $chatID = "8756360315"
-          
-          $message = @"
-          ✅ Informasi TheRDP Bot (Re-run)
-          
-          IP: $ip
-          User1: $user
-          User2: runneradmin
-          Pass: $pass
-          
-          Hubungkan ke RD Client/Windows App
-          Selamat Mencoba
-          "@
-          
-          $uri = "https://api.telegram.org/bot$botToken/sendMessage"
-          $body = @{
-              chat_id = $chatID
-              text    = $message
-          } | ConvertTo-Json -Compress
-          
-          try {
-              $response = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType "application/json; charset=utf-8"
-              Write-Host "✅ Info re-run terkirim ke Telegram!"
-          } catch {
-              Write-Warning "⚠️ Gagal kirim info re-run: $_"
-          }
           
           Write-Host "`n╔══════════════════════════════════════════════════╗"
           Write-Host "║          KONEKSI RDP SIAP DIGUNAKAN            ║"
@@ -408,22 +310,10 @@ jobs:
           Write-Host "║  👤 User 2       : runneradmin"
           Write-Host "║  🔑 Password     : $pass"
           Write-Host "╚══════════════════════════════════════════════════╝"
-          Write-Host "✅ Informasi sudah dikirim ke Telegram Bot!"
-          Write-Host "📅 Auto re-run setiap hari jam 05:59"
           Write-Host "Silakan gunakan Remote Desktop Connection."
           Write-Host "Tekan Cancel pada workflow untuk mengakhiri.`n"
           
-          # Hitung mundur sampai jam 05:59 berikutnya
           while ($true) {
-              $currentTime = Get-Date
-              $nextRun = Get-Date -Hour 5 -Minute 59 -Second 0
-              
-              # Jika sudah lewat jam 05:59 hari ini, set ke besok
-              if ($currentTime -ge $nextRun) {
-                  $nextRun = $nextRun.AddDays(1)
-              }
-              
-              $timeLeft = $nextRun - $currentTime
-              Write-Host "[$currentTime] 🟢 Runner aktif - Re-run berikutnya dalam $($timeLeft.Hours) jam $($timeLeft.Minutes) menit $($timeLeft.Seconds) detik"
+              Write-Host "[$(Get-Date)] 🟢 Runner tetap aktif..."
               Start-Sleep -Seconds 180
           }
