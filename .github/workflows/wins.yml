@@ -11,6 +11,10 @@ on:
         description: 'Password untuk akun RDP'
         required: true
         default: 'Redz132_'
+      duration:
+        description: 'Durasi RDP (jam)'
+        required: false
+        default: '6'
       tailscale_key:
         description: 'Tailscale Auth Key (kosongkan untuk pakai secret default)'
         required: false
@@ -22,7 +26,7 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: 🖥️ Install Virtual Display Driver
+      - name: 1️⃣ Install Virtual Display Driver
         shell: pwsh
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
@@ -64,7 +68,7 @@ jobs:
 
           Write-Host "✅ Virtual display driver berhasil diinstal dan monitor aktif."
 
-      - name: 🔧 Configure Core RDP Settings
+      - name: 2️⃣ Configure Core RDP Settings
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║       MENGONFIGURASI RDP & THEMES          ║"
@@ -87,7 +91,7 @@ jobs:
           Restart-Service -Name TermService -Force
           Write-Host "✅ RDP & Themes siap."
 
-      - name: 👥 Setup User Accounts for RDP
+      - name: 3️⃣ Setup User Accounts for RDP
         shell: pwsh
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
@@ -115,20 +119,7 @@ jobs:
 
           Write-Host "Semua user menggunakan password yang sama."
 
-      - name: 🎮 Install OpenCL, OpenGL, & Vulkan Compatibility Pack
-        shell: pwsh
-        run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║  INSTALL OPENCL, OPENGL, VULKAN PACK      ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
-          winget install -e --id Microsoft.OpenCLGLVulkanCompatibilityPack --accept-source-agreements --accept-package-agreements
-          if ($LASTEXITCODE -ne 0) {
-              Write-Warning "⚠️ Compatibility pack gagal, lanjutkan."
-          } else {
-              Write-Host "✅ OpenCL, OpenGL, Vulkan compatibility pack terinstal."
-          }
-
-      - name: 🎨 Set Custom Wallpaper, Lock Screen, and Profile Picture
+      - name: 4️⃣ Set Custom Wallpaper & Lock Screen
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║   MENGATUR WALLPAPER & LOCK SCREEN        ║"
@@ -137,26 +128,77 @@ jobs:
           $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
           Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
 
+          # Set Wallpaper via Policy
           $policyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
           if (!(Test-Path $policyPath)) { New-Item -Path $policyPath -Force }
           Set-ItemProperty -Path $policyPath -Name "Wallpaper" -Value $imagePath -Force
           Set-ItemProperty -Path $policyPath -Name "WallpaperStyle" -Value "2" -Force
 
+          # Set Lock Screen
           $persPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
           if (!(Test-Path $persPath)) { New-Item -Path $persPath -Force }
           Set-ItemProperty -Path $persPath -Name "LockScreenImage" -Value $imagePath -Force
 
-          $userPicDir = "C:\ProgramData\Microsoft\User Account Pictures"
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user.png" -Force
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user.jpg" -Force
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user.bmp" -Force
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user-32.png" -Force
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user-40.png" -Force
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user-48.png" -Force
-          Copy-Item -Path $imagePath -Destination "$userPicDir\user-192.png" -Force
-          Write-Host "✅ Wallpaper & lockscreen siap."
+          Write-Host "✅ Wallpaper & Lock Screen siap."
 
-      - name: 📜 Create Logon Startup Script
+      - name: 5️⃣ Set Custom Profile Picture
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════════╗"
+          Write-Host "║     MENGATUR PROFILE PICTURE USER         ║"
+          Write-Host "╚══════════════════════════════════════════════╝"
+          
+          $profilePicUrl = "https://d.uguu.se/fkeWNWRb.jpeg"
+          $profilePicPath = "$env:TEMP\profile_pic.jpg"
+          $userPicDir = "C:\ProgramData\Microsoft\User Account Pictures"
+          
+          Write-Host "📥 Mendownload profile picture..."
+          try {
+              Invoke-WebRequest -Uri $profilePicUrl -OutFile $profilePicPath -UseBasicParsing
+              Write-Host "✅ Profile picture berhasil didownload!"
+          } catch {
+              Write-Warning "⚠️ Gagal download profile picture: $_"
+              Write-Host "Melanjutkan tanpa mengubah profile picture..."
+              exit 0
+          }
+          
+          Write-Host "🖼️ Mengganti profile picture untuk semua user..."
+          
+          # Copy ke semua ukuran yang diperlukan Windows
+          $sizes = @(
+              @{Name="user.png"; Size=448},
+              @{Name="user-32.png"; Size=32},
+              @{Name="user-40.png"; Size=40},
+              @{Name="user-48.png"; Size=48},
+              @{Name="user-192.png"; Size=192}
+          )
+          
+          foreach ($size in $sizes) {
+              try {
+                  Copy-Item -Path $profilePicPath -Destination "$userPicDir\$($size.Name)" -Force
+                  Write-Host "  ✅ $($size.Name) terpasang"
+              } catch {
+                  Write-Warning "  ⚠️ Gagal copy $($size.Name): $_"
+              }
+          }
+          
+          # Copy juga dalam format .bmp dan .jpg untuk kompatibilitas
+          try {
+              Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.bmp" -Force
+              Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.jpg" -Force
+              Write-Host "  ✅ Format tambahan terpasang"
+          } catch {
+              Write-Warning "  ⚠️ Gagal copy format tambahan"
+          }
+          
+          # Refresh Explorer untuk menerapkan perubahan
+          Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          Start-Process explorer -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ Profile picture berhasil diganti!"
+
+      - name: 6️⃣ Create Logon Startup Script
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║   MEMBUAT SCRIPT LOGON WALLPAPER          ║"
@@ -194,7 +236,7 @@ jobs:
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SetCustomWallpaper" -Value "PowerShell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\set_wallpaper.ps1" -Force
           Write-Host "✅ Script logon terpasang."
 
-      - name: 🧹 Clean Global Desktop Shortcuts
+      - name: 7️⃣ Clean Global Desktop Shortcuts
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║     MEMBERSIHKAN SHORTCUT PUBLIK         ║"
@@ -211,7 +253,7 @@ jobs:
           }
           Write-Host "✅ Desktop publik bersih."
 
-      - name: 🔗 Install Tailscale
+      - name: 8️⃣ Install Tailscale
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║        MENGINSTALL TAILSCALE              ║"
@@ -224,7 +266,7 @@ jobs:
           Start-Sleep -Seconds 5
           Write-Host "✅ Tailscale terinstal."
 
-      - name: 🌐 Tailscale Auth Key Login
+      - name: 9️⃣ Tailscale Auth Key Login
         shell: pwsh
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
@@ -278,7 +320,7 @@ jobs:
           Write-Host "✅ Berhasil terhubung ke Tailscale!"
           Write-Host "🌍 IP Tailscale: $tsIP"
 
-      - name: 📡 Verify RDP Accessibility
+      - name: 🔟 Verify RDP Accessibility
         run: |
           Write-Host "╔══════════════════════════════════════════════╗"
           Write-Host "║      MEMVERIFIKASI KONEKSI RDP           ║"
@@ -291,11 +333,25 @@ jobs:
           }
           Write-Host "✅ Port 3389 terbuka, RDP siap."
 
-      - name: ℹ️ INFORMASI RDP
+      - name: 1️⃣1️⃣ INFORMASI RDP
         run: |
           $ip = $env:TAILSCALE_IP
           $user = "${{ github.event.inputs.username }}"
           $pass = "${{ github.event.inputs.password }}"
+          
+          # Hitung durasi
+          $durasiInput = "${{ github.event.inputs.duration }}"
+          if ($durasiInput -eq '' -or $durasiInput -eq '0') {
+              $jam = 6
+          } else {
+              try {
+                  $jam = [int]$durasiInput
+                  if ($jam -lt 1) { $jam = 6 }
+              } catch {
+                  $jam = 6
+              }
+          }
+          $menit = $jam * 60
           
           Write-Host ""
           Write-Host "╔══════════════════════════════════════════════════╗"
@@ -308,7 +364,7 @@ jobs:
           Write-Host "║  👤 User 1       : $user"
           Write-Host "║  👤 User 2       : runneradmin"
           Write-Host "║  🔑 Password     : $pass"
-          Write-Host "║  ⏱️  Durasi       : 6 Jam"
+          Write-Host "║  ⏱️  Durasi       : $jam Jam ($menit Menit)"
           Write-Host "║                                                  ║"
           Write-Host "╚══════════════════════════════════════════════════╝"
           Write-Host ""
@@ -316,8 +372,26 @@ jobs:
           Write-Host "📱 Gunakan IP Tailscale di atas"
           Write-Host ""
 
-      - name: ⏳ MAINTAIN CONNECTION
+      - name: 1️⃣2️⃣ MAINTAIN CONNECTION
         run: |
+          $ip = $env:TAILSCALE_IP
+          $user = "${{ github.event.inputs.username }}"
+          $pass = "${{ github.event.inputs.password }}"
+          
+          # Hitung durasi
+          $durasiInput = "${{ github.event.inputs.duration }}"
+          if ($durasiInput -eq '' -or $durasiInput -eq '0') {
+              $jam = 6
+          } else {
+              try {
+                  $jam = [int]$durasiInput
+                  if ($jam -lt 1) { $jam = 6 }
+              } catch {
+                  $jam = 6
+              }
+          }
+          $totalDetik = $jam * 3600
+          
           Write-Host "╔══════════════════════════════════════════════════╗"
           Write-Host "║                                                  ║"
           Write-Host "║           MAINTAIN CONNECTION                   ║"
@@ -326,12 +400,12 @@ jobs:
           Write-Host "╚══════════════════════════════════════════════════╝"
           Write-Host ""
           Write-Host "🟢 RDP sedang berjalan..."
-          Write-Host "⏱️  Durasi maksimal: 6 jam (360 menit)"
+          Write-Host "⏱️  Durasi: $jam Jam ($totalDetik detik)"
           Write-Host "🔴 Tekan Cancel untuk menghentikan"
           Write-Host ""
           
           $startTime = Get-Date
-          $endTime = $startTime.AddHours(6)
+          $endTime = $startTime.AddSeconds($totalDetik)
           
           while ($true) {
               $currentTime = Get-Date
