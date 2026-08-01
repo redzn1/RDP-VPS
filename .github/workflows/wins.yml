@@ -17,13 +17,10 @@ on:
         default: ''
 
 jobs:
-  # ============================================
-  # JOB 1: SETUP & INFORMASI RDP
-  # ============================================
-  informasi-rdp:
+  winser-2025:
     runs-on: windows-2025
-    timeout-minutes: 30
-    
+    timeout-minutes: 3600
+
     steps:
       - name: 🖥️ Install Virtual Display Driver
         shell: pwsh
@@ -294,17 +291,16 @@ jobs:
           }
           Write-Host "✅ Port 3389 terbuka, RDP siap."
 
-      - name: 🎯 TAMPILKAN INFORMASI RDP
+      - name: ℹ️ INFORMASI RDP
         run: |
           $ip = $env:TAILSCALE_IP
           $user = "${{ github.event.inputs.username }}"
           $pass = "${{ github.event.inputs.password }}"
           
-          Write-Host "`n"
+          Write-Host ""
           Write-Host "╔══════════════════════════════════════════════════╗"
           Write-Host "║                                                  ║"
-          Write-Host "║        🖥️  WINDOWS SERVER 2025 RDP              ║"
-          Write-Host "║        INFORMASI KONEKSI                        ║"
+          Write-Host "║           🖥️  INFORMASI RDP                     ║"
           Write-Host "║                                                  ║"
           Write-Host "╠══════════════════════════════════════════════════╣"
           Write-Host "║                                                  ║"
@@ -315,21 +311,12 @@ jobs:
           Write-Host "║  ⏱️  Durasi       : 6 Jam"
           Write-Host "║                                                  ║"
           Write-Host "╚══════════════════════════════════════════════════╝"
-          Write-Host "`n"
-          Write-Host "🔗 Gunakan Remote Desktop Connection"
-          Write-Host "📱 Masukkan IP Tailscale di atas"
-          Write-Host "`n"
+          Write-Host ""
+          Write-Host "🔗 Hubungkan ke Remote Desktop Connection"
+          Write-Host "📱 Gunakan IP Tailscale di atas"
+          Write-Host ""
 
-  # ============================================
-  # JOB 2: MAINTAIN CONNECTION
-  # ============================================
-  maintain-connection:
-    needs: informasi-rdp
-    runs-on: windows-2025
-    timeout-minutes: 360
-    
-    steps:
-      - name: ⏳ MAINTAIN CONNECTION - Jaga Koneksi Tetap Hidup
+      - name: ⏳ MAINTAIN CONNECTION
         run: |
           Write-Host "╔══════════════════════════════════════════════════╗"
           Write-Host "║                                                  ║"
@@ -337,11 +324,11 @@ jobs:
           Write-Host "║        MENJAGA RDP TETAP AKTIF                 ║"
           Write-Host "║                                                  ║"
           Write-Host "╚══════════════════════════════════════════════════╝"
-          Write-Host "`n"
+          Write-Host ""
           Write-Host "🟢 RDP sedang berjalan..."
           Write-Host "⏱️  Durasi maksimal: 6 jam (360 menit)"
           Write-Host "🔴 Tekan Cancel untuk menghentikan"
-          Write-Host "`n"
+          Write-Host ""
           
           $startTime = Get-Date
           $endTime = $startTime.AddHours(6)
@@ -351,11 +338,11 @@ jobs:
               $timeLeft = $endTime - $currentTime
               
               if ($timeLeft.TotalSeconds -le 0) {
-                  Write-Host "`n"
+                  Write-Host ""
                   Write-Host "╔══════════════════════════════════════════════════╗"
                   Write-Host "║     ⏰ WAKTU HABIS - RDP DIMATIKAN             ║"
                   Write-Host "╚══════════════════════════════════════════════════╝"
-                  Write-Host "`n"
+                  Write-Host ""
                   break
               }
               
