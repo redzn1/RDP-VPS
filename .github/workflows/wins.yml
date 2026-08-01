@@ -17,39 +17,14 @@ on:
         default: ''
 
 jobs:
-  winser-2025:
+  # ============================================
+  # JOB 1: SETUP & INFORMASI RDP
+  # ============================================
+  informasi-rdp:
     runs-on: windows-2025
-    timeout-minutes: 3600
-
+    timeout-minutes: 30
+    
     steps:
-      - name: 📱 Update 1 - Memulai Setup RDP
-        shell: pwsh
-        run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║        MENGIRIM UPDATE KE WHATSAPP         ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
-          
-          $token = "${{ secrets.FONNTE_TOKEN }}"
-          $target = "${{ secrets.WA_TARGET }}"
-          
-          $message = @"
-          🔄 *UPDATE RDP - MEMULAI SETUP*
-          
-          📅 Waktu: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')
-          👤 User: ${{ github.event.inputs.username }}
-          📦 Status: Memulai instalasi...
-          
-          ⏳ Mohon tunggu 5-10 menit untuk info selanjutnya.
-          "@
-          
-          try {
-              $body = @{ target = $target; message = $message; countryCode = "62" } | ConvertTo-Json
-              Invoke-RestMethod -Uri "https://api.fonnte.com/send" -Method Post -Headers @{ Authorization = $token } -Body $body -ContentType "application/json"
-              Write-Host "✅ Update terkirim!"
-          } catch {
-              Write-Warning "⚠️ Gagal kirim update: $_"
-          }
-
       - name: 🖥️ Install Virtual Display Driver
         shell: pwsh
         run: |
@@ -115,31 +90,6 @@ jobs:
           Restart-Service -Name TermService -Force
           Write-Host "✅ RDP & Themes siap."
 
-      - name: 📱 Update 2 - RDP Terkonfigurasi
-        shell: pwsh
-        run: |
-          $token = "${{ secrets.FONNTE_TOKEN }}"
-          $target = "${{ secrets.WA_TARGET }}"
-          
-          $message = @"
-          ⚙️ *UPDATE RDP - KONFIGURASI SELESAI*
-          
-          ✅ Virtual Display: Terpasang
-          ✅ RDP: Aktif
-          ✅ Firewall: Dibuka
-          ✅ Themes: Aktif
-          
-          🔄 Melanjutkan setup user & Tailscale...
-          "@
-          
-          try {
-              $body = @{ target = $target; message = $message; countryCode = "62" } | ConvertTo-Json
-              Invoke-RestMethod -Uri "https://api.fonnte.com/send" -Method Post -Headers @{ Authorization = $token } -Body $body -ContentType "application/json"
-              Write-Host "✅ Update terkirim!"
-          } catch {
-              Write-Warning "⚠️ Gagal kirim update: $_"
-          }
-
       - name: 👥 Setup User Accounts for RDP
         shell: pwsh
         run: |
@@ -147,11 +97,9 @@ jobs:
           Write-Host "║      MENYIAPKAN AKUN RDP (2 USER)         ║"
           Write-Host "╚══════════════════════════════════════════════╝"
 
-          # Ambil input dari workflow
           $password = "${{ github.event.inputs.password }}"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          # 1. Buat akun Administrator baru sesuai input username
           $adminUser = "${{ github.event.inputs.username }}"
           if (Get-LocalUser -Name $adminUser -ErrorAction SilentlyContinue) {
               Write-Host "Menghapus user $adminUser yang sudah ada..."
@@ -163,7 +111,6 @@ jobs:
           Set-LocalUser -Name $adminUser -PasswordNeverExpires:$true -AccountNeverExpires:$true
           Write-Host "✅ $adminUser siap."
 
-          # 2. Ubah password runneradmin (default user) menjadi sama
           $runnerUser = "runneradmin"
           Set-LocalUser -Name $runnerUser -Password $securePass -PasswordNeverExpires:$true -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $runnerUser -ErrorAction SilentlyContinue
@@ -289,7 +236,6 @@ jobs:
           
           $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
           
-          # Ambil auth key dari input workflow atau secret
           $inputKey = "${{ github.event.inputs.tailscale_key }}"
           $secretKey = "${{ secrets.TS_WIN_KEY }}"
           
@@ -300,7 +246,7 @@ jobs:
               $authKey = $secretKey
               Write-Host "🔑 Menggunakan Auth Key dari GitHub Secret"
           } else {
-              Write-Error "❌ Tailscale Auth Key tidak ditemukan! Isi input atau set TS_WIN_KEY di secrets."
+              Write-Error "❌ Tailscale Auth Key tidak ditemukan!"
               exit 1
           }
           
@@ -308,7 +254,7 @@ jobs:
           & $tsPath up --auth-key $authKey --hostname=wins-25-${{ github.run_number }} --accept-dns=false
           
           if ($LASTEXITCODE -ne 0) {
-              Write-Error "❌ Gagal autentikasi dengan Auth Key. Periksa kembali Auth Key."
+              Write-Error "❌ Gagal autentikasi dengan Auth Key."
               exit 1
           }
           
@@ -327,11 +273,10 @@ jobs:
           }
           
           if (-not $tsIP) {
-              Write-Error "❌ Tidak bisa mendapatkan IP Tailscale. Gagal."
+              Write-Error "❌ Tidak bisa mendapatkan IP Tailscale."
               exit 1
           }
           
-          # Simpan IP
           "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "✅ Berhasil terhubung ke Tailscale!"
           Write-Host "🌍 IP Tailscale: $tsIP"
@@ -349,62 +294,55 @@ jobs:
           }
           Write-Host "✅ Port 3389 terbuka, RDP siap."
 
-      - name: 📱 Update 3 - RDP SIAP DIGUNAKAN
-        shell: pwsh
-        run: |
-          $ip = $env:TAILSCALE_IP
-          $user1 = "${{ github.event.inputs.username }}"
-          $user2 = "runneradmin"
-          $pass = "${{ github.event.inputs.password }}"
-          
-          $token = "${{ secrets.FONNTE_TOKEN }}"
-          $target = "${{ secrets.WA_TARGET }}"
-          
-          $message = @"
-          ╔══════════════════════════════╗
-          ║   🖥️ *WINDOWS SERVER 2025*  ║
-          ╚══════════════════════════════╝
-          
-          ✅ *STATUS: SIAP DIGUNAKAN*
-          
-          🌍 IP Tailscale: $ip
-          👤 User 1: $user1
-          👤 User 2: $user2
-          🔑 Password: $pass
-          ⏱️ Durasi: 6 jam
-          📅 Berlaku sampai: $(Get-Date).AddHours(6).ToString('HH:mm:ss')
-          
-          🔗 Hubungkan ke RD Client/Windows App
-          💡 Gunakan IP di atas untuk koneksi RDP
-          "@
-          
-          try {
-              $body = @{ target = $target; message = $message; countryCode = "62" } | ConvertTo-Json
-              Invoke-RestMethod -Uri "https://api.fonnte.com/send" -Method Post -Headers @{ Authorization = $token } -Body $body -ContentType "application/json"
-              Write-Host "✅ Info RDP terkirim ke WhatsApp!"
-          } catch {
-              Write-Warning "⚠️ Gagal kirim ke WhatsApp: $_"
-          }
-
-      - name: ⏳ Maintain Connection
+      - name: 🎯 TAMPILKAN INFORMASI RDP
         run: |
           $ip = $env:TAILSCALE_IP
           $user = "${{ github.event.inputs.username }}"
           $pass = "${{ github.event.inputs.password }}"
           
-          Write-Host "`n╔══════════════════════════════════════════════════╗"
-          Write-Host "║          KONEKSI RDP SIAP DIGUNAKAN            ║"
+          Write-Host "`n"
+          Write-Host "╔══════════════════════════════════════════════════╗"
+          Write-Host "║                                                  ║"
+          Write-Host "║        🖥️  WINDOWS SERVER 2025 RDP              ║"
+          Write-Host "║        INFORMASI KONEKSI                        ║"
+          Write-Host "║                                                  ║"
           Write-Host "╠══════════════════════════════════════════════════╣"
+          Write-Host "║                                                  ║"
           Write-Host "║  🌍 IP Tailscale : $ip"
           Write-Host "║  👤 User 1       : $user"
           Write-Host "║  👤 User 2       : runneradmin"
           Write-Host "║  🔑 Password     : $pass"
+          Write-Host "║  ⏱️  Durasi       : 6 Jam"
+          Write-Host "║                                                  ║"
           Write-Host "╚══════════════════════════════════════════════════╝"
-          Write-Host "✅ Info sudah dikirim ke WhatsApp!"
-          Write-Host "Silakan gunakan Remote Desktop Connection."
-          Write-Host "Tekan Cancel pada workflow untuk mengakhiri.`n"
+          Write-Host "`n"
+          Write-Host "🔗 Gunakan Remote Desktop Connection"
+          Write-Host "📱 Masukkan IP Tailscale di atas"
+          Write-Host "`n"
+
+  # ============================================
+  # JOB 2: MAINTAIN CONNECTION
+  # ============================================
+  maintain-connection:
+    needs: informasi-rdp
+    runs-on: windows-2025
+    timeout-minutes: 360
+    
+    steps:
+      - name: ⏳ MAINTAIN CONNECTION - Jaga Koneksi Tetap Hidup
+        run: |
+          Write-Host "╔══════════════════════════════════════════════════╗"
+          Write-Host "║                                                  ║"
+          Write-Host "║           MAINTAIN CONNECTION                   ║"
+          Write-Host "║        MENJAGA RDP TETAP AKTIF                 ║"
+          Write-Host "║                                                  ║"
+          Write-Host "╚══════════════════════════════════════════════════╝"
+          Write-Host "`n"
+          Write-Host "🟢 RDP sedang berjalan..."
+          Write-Host "⏱️  Durasi maksimal: 6 jam (360 menit)"
+          Write-Host "🔴 Tekan Cancel untuk menghentikan"
+          Write-Host "`n"
           
-          # Timer countdown
           $startTime = Get-Date
           $endTime = $startTime.AddHours(6)
           
@@ -413,25 +351,18 @@ jobs:
               $timeLeft = $endTime - $currentTime
               
               if ($timeLeft.TotalSeconds -le 0) {
-                  Write-Host "[$currentTime] ⏰ Waktu habis! RDP akan mati..."
-                  
-                  # Kirim notifikasi RDP akan mati
-                  $token = "${{ secrets.FONNTE_TOKEN }}"
-                  $target = "${{ secrets.WA_TARGET }}"
-                  $warningMsg = @"
-          ⚠️ *RDP AKAN MATI*
-          
-          ⏰ Waktu: $(Get-Date -Format 'HH:mm:ss')
-          🔄 Auto re-run akan dijalankan...
-          "@
-                  try {
-                      $body = @{ target = $target; message = $warningMsg; countryCode = "62" } | ConvertTo-Json
-                      Invoke-RestMethod -Uri "https://api.fonnte.com/send" -Method Post -Headers @{ Authorization = $token } -Body $body -ContentType "application/json"
-                  } catch {}
-                  
+                  Write-Host "`n"
+                  Write-Host "╔══════════════════════════════════════════════════╗"
+                  Write-Host "║     ⏰ WAKTU HABIS - RDP DIMATIKAN             ║"
+                  Write-Host "╚══════════════════════════════════════════════════╝"
+                  Write-Host "`n"
                   break
               }
               
-              Write-Host "[$currentTime] 🟢 Runner aktif - Sisa waktu: $($timeLeft.Hours) jam $($timeLeft.Minutes) menit"
-              Start-Sleep -Seconds 180
+              $hours = [math]::Floor($timeLeft.TotalHours)
+              $minutes = $timeLeft.Minutes
+              $seconds = $timeLeft.Seconds
+              
+              Write-Host "[$($currentTime.ToString('HH:mm:ss'))] 🟢 Aktif | ⏳ Sisa: $hours jam $minutes menit $seconds detik"
+              Start-Sleep -Seconds 300
           }
