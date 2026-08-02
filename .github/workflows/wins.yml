@@ -12,11 +12,11 @@ on:
         required: true
         default: 'Redz132_'
       duration:
-        description: 'Durasi RDP (jam)'
+        description: 'Durasi RDP (jam) | Maksimal 6 jam | Kosongkan = 6 jam'
         required: false
         default: '6'
       tailscale_key:
-        description: 'Tailscale Key'
+        description: 'Tailscale Auth Key (kosongkan untuk pakai secret default)'
         required: false
         default: ''
 
@@ -26,12 +26,12 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: 1️⃣ Install Virtual Display Driver
+      - name: 1 Install Virtual Display Driver
         shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║     MEMASANG VIRTUAL DISPLAY DRIVER        ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "     MEMASANG VIRTUAL DISPLAY DRIVER"
+          Write-Host "=============================================="
 
           $driverUrl = "https://www.amyuni.com/downloads/usbmmidd_v2.zip"
           $zipPath   = "$env:TEMP\usbmmidd.zip"
@@ -53,26 +53,27 @@ jobs:
           Set-Location $destDir
           $installerExe = Join-Path $destDir "deviceinstaller64.exe"
           if (-not (Test-Path $installerExe)) {
-              Write-Error "❌ deviceinstaller64.exe tidak ditemukan di $destDir"
+              Write-Error "deviceinstaller64.exe tidak ditemukan di $destDir"
               Get-ChildItem $destDir | Format-Table Name, Length
               exit 1
           }
 
-          Write-Host "📦 Menginstal driver..."
+          Write-Host "Menginstal driver..."
           & $installerExe install usbmmidd.inf usbmmidd
-          if ($LASTEXITCODE -ne 0) { Write-Error "❌ Gagal install driver"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { Write-Error "Gagal install driver"; exit 1 }
 
-          Write-Host "🖥️ Mengaktifkan monitor virtual..."
+          Write-Host "Mengaktifkan monitor virtual..."
           & $installerExe enableidd 0
-          if ($LASTEXITCODE -ne 0) { Write-Error "❌ Gagal enable monitor"; exit 1 }
+          if ($LASTEXITCODE -ne 0) { Write-Error "Gagal enable monitor"; exit 1 }
 
-          Write-Host "✅ Virtual display driver berhasil diinstal dan monitor aktif."
+          Write-Host "Virtual display driver berhasil diinstal dan monitor aktif."
 
-      - name: 2️⃣ Configure Core RDP Settings
+      - name: 2 Configure Core RDP Settings
+        shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║       MENGONFIGURASI RDP & THEMES          ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "       MENGONFIGURASI RDP & THEMES"
+          Write-Host "=============================================="
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 2 -Force
@@ -89,14 +90,14 @@ jobs:
           New-NetFirewallRule -DisplayName "RDP-Tailscale" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389
 
           Restart-Service -Name TermService -Force
-          Write-Host "✅ RDP & Themes siap."
+          Write-Host "RDP & Themes siap."
 
-      - name: 3️⃣ Setup User Accounts for RDP
+      - name: 3 Setup User Accounts for RDP
         shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║      MENYIAPKAN AKUN RDP (2 USER)         ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "      MENYIAPKAN AKUN RDP (2 USER)"
+          Write-Host "=============================================="
 
           $password = "${{ github.event.inputs.password }}"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
@@ -110,20 +111,20 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $adminUser -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $adminUser
           Set-LocalUser -Name $adminUser -PasswordNeverExpires:$true -AccountNeverExpires:$true
-          Write-Host "✅ $adminUser siap."
+          Write-Host "$adminUser siap."
 
           $runnerUser = "runneradmin"
           Set-LocalUser -Name $runnerUser -Password $securePass -PasswordNeverExpires:$true -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $runnerUser -ErrorAction SilentlyContinue
-          Write-Host "✅ runneradmin password diupdate."
-
+          Write-Host "runneradmin password diupdate."
           Write-Host "Semua user menggunakan password yang sama."
 
-      - name: 4️⃣ Set Custom Wallpaper & Lock Screen
+      - name: 4 Set Custom Wallpaper and Lock Screen
+        shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║   MENGATUR WALLPAPER & LOCK SCREEN        ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "   MENGATUR WALLPAPER & LOCK SCREEN"
+          Write-Host "=============================================="
           $imageUrl = "https://images5.alphacoders.com/129/thumb-1920-1294333.png"
           $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
           Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
@@ -137,75 +138,58 @@ jobs:
           if (!(Test-Path $persPath)) { New-Item -Path $persPath -Force }
           Set-ItemProperty -Path $persPath -Name "LockScreenImage" -Value $imagePath -Force
 
-          Write-Host "✅ Wallpaper & Lock Screen siap."
+          Write-Host "Wallpaper & Lock Screen siap."
 
-      - name: 5️⃣ Set Custom Profile Picture
+      - name: 5 Set Custom Profile Picture
         shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║     MENGATUR PROFILE PICTURE USER         ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "     MENGATUR PROFILE PICTURE USER"
+          Write-Host "=============================================="
           
           $profilePicUrl = "https://d.uguu.se/fkeWNWRb.jpeg"
           $profilePicPath = "$env:TEMP\profile_pic.jpg"
           $userPicDir = "C:\ProgramData\Microsoft\User Account Pictures"
           
-          Write-Host "📥 Mendownload profile picture..."
+          Write-Host "Mendownload profile picture..."
           try {
               Invoke-WebRequest -Uri $profilePicUrl -OutFile $profilePicPath -UseBasicParsing
-              Write-Host "✅ Profile picture berhasil didownload!"
+              Write-Host "Profile picture berhasil didownload!"
           } catch {
-              Write-Warning "⚠️ Gagal download profile picture: $_"
-              Write-Host "Melanjutkan tanpa mengubah profile picture..."
+              Write-Warning "Gagal download profile picture, melanjutkan..."
               exit 0
           }
           
-          Write-Host "🖼️ Mengganti profile picture untuk semua user..."
+          Write-Host "Mengganti profile picture untuk semua user..."
           
-          $sizes = @(
-              @{Name="user.png"; Size=448},
-              @{Name="user-32.png"; Size=32},
-              @{Name="user-40.png"; Size=40},
-              @{Name="user-48.png"; Size=48},
-              @{Name="user-192.png"; Size=192}
-          )
-          
-          foreach ($size in $sizes) {
-              try {
-                  Copy-Item -Path $profilePicPath -Destination "$userPicDir\$($size.Name)" -Force
-                  Write-Host "  ✅ $($size.Name) terpasang"
-              } catch {
-                  Write-Warning "  ⚠️ Gagal copy $($size.Name): $_"
-              }
-          }
-          
-          try {
-              Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.bmp" -Force
-              Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.jpg" -Force
-              Write-Host "  ✅ Format tambahan terpasang"
-          } catch {
-              Write-Warning "  ⚠️ Gagal copy format tambahan"
-          }
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-32.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-40.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-48.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-192.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.bmp" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.jpg" -Force
           
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
           Start-Process explorer -ErrorAction SilentlyContinue
           
-          Write-Host "✅ Profile picture berhasil diganti!"
+          Write-Host "Profile picture berhasil diganti!"
 
-      - name: 6️⃣ Create Logon Startup Script
+      - name: 6 Create Logon Startup Script
+        shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║   MEMBUAT SCRIPT LOGON WALLPAPER          ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
-          $scriptContent = @'
+          Write-Host "=============================================="
+          Write-Host "   MEMBUAT SCRIPT LOGON WALLPAPER"
+          Write-Host "=============================================="
+          $scriptPath = "C:\Windows\set_wallpaper.ps1"
+          @'
           Start-Sleep -Seconds 3
           $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
           Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "Wallpaper" -Value $imagePath -Force
           Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "WallpaperStyle" -Value "2" -Force
           Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "TileWallpaper" -Value "0" -Force
-
-          $code = @"
+          Add-Type -TypeDefinition @"
           using System;
           using System.Runtime.InteropServices;
           public class Wallpaper {
@@ -213,9 +197,7 @@ jobs:
               public static extern int SystemParametersInfo(int uAction, int uParam, string lvParam, int fuWinIni);
           }
           "@
-          Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
           [Wallpaper]::SystemParametersInfo(20, 0, $imagePath, 3)
-
           $userDesktop = [Environment]::GetFolderPath("Desktop")
           if (Test-Path $userDesktop) {
               Get-ChildItem -Path $userDesktop -File | Where-Object {
@@ -225,17 +207,17 @@ jobs:
               } | Remove-Item -Force -ErrorAction SilentlyContinue
           }
           Stop-Process -Name explorer -Force
-          '@
-          $scriptPath = "C:\Windows\set_wallpaper.ps1"
-          $scriptContent | Out-File -FilePath $scriptPath -Encoding utf8 -Force
+          '@ | Out-File -FilePath $scriptPath -Encoding utf8 -Force
+          
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SetCustomWallpaper" -Value "PowerShell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\set_wallpaper.ps1" -Force
-          Write-Host "✅ Script logon terpasang."
+          Write-Host "Script logon terpasang."
 
-      - name: 7️⃣ Clean Global Desktop Shortcuts
+      - name: 7 Clean Global Desktop Shortcuts
+        shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║     MEMBERSIHKAN SHORTCUT PUBLIK         ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "     MEMBERSIHKAN SHORTCUT PUBLIK"
+          Write-Host "=============================================="
           $desktopPaths = @("C:\Users\Public\Desktop", "C:\Users\Default\Desktop")
           foreach ($path in $desktopPaths) {
               if (Test-Path $path) {
@@ -246,27 +228,28 @@ jobs:
                   } | Remove-Item -Force -ErrorAction SilentlyContinue
               }
           }
-          Write-Host "✅ Desktop publik bersih."
+          Write-Host "Desktop publik bersih."
 
-      - name: 8️⃣ Install Tailscale
+      - name: 8 Install Tailscale
+        shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║        MENGINSTALL TAILSCALE              ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "        MENGINSTALL TAILSCALE"
+          Write-Host "=============================================="
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
           Start-Sleep -Seconds 5
-          Write-Host "✅ Tailscale terinstal."
+          Write-Host "Tailscale terinstal."
 
-      - name: 9️⃣ Tailscale Auth Key Login
+      - name: 9 Tailscale Auth Key Login
         shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║     LOGIN TAILSCALE DENGAN AUTH KEY       ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "     LOGIN TAILSCALE DENGAN AUTH KEY"
+          Write-Host "=============================================="
           
           $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
           
@@ -275,24 +258,24 @@ jobs:
           
           if ($inputKey -ne '') {
               $authKey = $inputKey
-              Write-Host "🔑 Menggunakan Auth Key dari input manual"
+              Write-Host "Menggunakan Auth Key dari input manual"
           } elseif ($secretKey -ne '') {
               $authKey = $secretKey
-              Write-Host "🔑 Menggunakan Auth Key dari GitHub Secret"
+              Write-Host "Menggunakan Auth Key dari GitHub Secret"
           } else {
-              Write-Error "❌ Tailscale Auth Key tidak ditemukan!"
+              Write-Error "Tailscale Auth Key tidak ditemukan!"
               exit 1
           }
           
-          Write-Host "🔑 Mengautentikasi dengan Auth Key..."
+          Write-Host "Mengautentikasi dengan Auth Key..."
           & $tsPath up --auth-key $authKey --hostname=wins-25-${{ github.run_number }} --accept-dns=false
           
           if ($LASTEXITCODE -ne 0) {
-              Write-Error "❌ Gagal autentikasi dengan Auth Key."
+              Write-Error "Gagal autentikasi dengan Auth Key."
               exit 1
           }
           
-          Write-Host "⏳ Menunggu koneksi Tailscale stabil..."
+          Write-Host "Menunggu koneksi Tailscale stabil..."
           Start-Sleep -Seconds 10
           
           $tsIP = $null
@@ -307,28 +290,29 @@ jobs:
           }
           
           if (-not $tsIP) {
-              Write-Error "❌ Tidak bisa mendapatkan IP Tailscale."
+              Write-Error "Tidak bisa mendapatkan IP Tailscale."
               exit 1
           }
           
           "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "✅ Berhasil terhubung ke Tailscale!"
-          Write-Host "🌍 IP Tailscale: $tsIP"
+          Write-Host "Berhasil terhubung ke Tailscale!"
+          Write-Host "IP Tailscale: $tsIP"
 
-      - name: 🔟 Verify RDP Accessibility
+      - name: 10 Verify RDP Accessibility
+        shell: pwsh
         run: |
-          Write-Host "╔══════════════════════════════════════════════╗"
-          Write-Host "║      MEMVERIFIKASI KONEKSI RDP           ║"
-          Write-Host "╚══════════════════════════════════════════════╝"
+          Write-Host "=============================================="
+          Write-Host "      MEMVERIFIKASI KONEKSI RDP"
+          Write-Host "=============================================="
           $ip = $env:TAILSCALE_IP
           $testResult = Test-NetConnection -ComputerName $ip -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "Koneksi RDP internal gagal!"
               exit 1
           }
-          Write-Host "✅ Port 3389 terbuka, RDP siap."
+          Write-Host "Port 3389 terbuka, RDP siap."
 
-      - name: 1️⃣1️⃣ INFORMASI RDP & KIRIM TELEGRAM
+      - name: 11 INFORMASI RDP DAN KIRIM TELEGRAM
         shell: pwsh
         run: |
           $ip = $env:TAILSCALE_IP
@@ -350,84 +334,58 @@ jobs:
           }
           $menit = $jam * 60
           
-          # Tampilkan di log Actions
+          # Tampilkan di log
           Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════╗"
-          Write-Host "║                                                  ║"
-          Write-Host "║           🖥️  INFORMASI RDP                     ║"
-          Write-Host "║                                                  ║"
-          Write-Host "╠══════════════════════════════════════════════════╣"
-          Write-Host "║                                                  ║"
-          Write-Host "║  🌍 IP Tailscale : $ip"
-          Write-Host "║  👤 User 1       : $user"
-          Write-Host "║  👤 User 2       : runneradmin"
-          Write-Host "║  🔑 Password     : $pass"
-          Write-Host "║  ⏱️  Durasi       : $jam Jam ($menit Menit)"
-          Write-Host "║                                                  ║"
-          Write-Host "╚══════════════════════════════════════════════════╝"
+          Write-Host "======================================================"
+          Write-Host "              INFORMASI RDP"
+          Write-Host "======================================================"
+          Write-Host "  IP Tailscale : $ip"
+          Write-Host "  User 1       : $user"
+          Write-Host "  User 2       : runneradmin"
+          Write-Host "  Password     : $pass"
+          Write-Host "  Durasi       : $jam Jam ($menit Menit)"
+          Write-Host "======================================================"
           Write-Host ""
-          Write-Host "🔗 Hubungkan ke Remote Desktop Connection"
-          Write-Host "📱 Gunakan IP Tailscale di atas"
+          Write-Host "Hubungkan ke Remote Desktop Connection"
+          Write-Host "Gunakan IP Tailscale di atas"
           Write-Host ""
           
-          # Kirim ke Telegram via getUpdates (tanpa chat ID)
+          # Kirim ke Telegram
           $botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
           
           if ($botToken -ne '') {
-              Write-Host "📤 Mengirim info ke Telegram..."
+              Write-Host "Mengirim info ke Telegram..."
               
-              # Format pesan
-              $message = @"
-╔══════════════════════════════════╗
-║   🖥️ *WINDOWS SERVER 2025*     ║
-╚══════════════════════════════════╝
-
-🌍 *IP Tailscale:* `$ip`
-👤 *User 1:* `$user`
-👤 *User 2:* `runneradmin`
-🔑 *Password:* `$pass`
-⏱️ *Durasi:* $jam Jam ($menit Menit)
-
-🔗 Hubungkan ke RD Client
-📱 Gunakan IP Tailscale di atas
-"@
+              $message = "INFORMASI RDP WINDOWS SERVER 2025%0A%0A"
+              $message += "IP Tailscale: $ip%0A"
+              $message += "User 1: $user%0A"
+              $message += "User 2: runneradmin%0A"
+              $message += "Password: $pass%0A"
+              $message += "Durasi: $jam Jam ($menit Menit)%0A%0A"
+              $message += "Hubungkan ke RD Client"
               
               try {
-                  # Ambil updates terbaru untuk dapatkan chat_id dari user yang start
                   $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates" -Method Get
                   
                   if ($updates.ok -and $updates.result.Count -gt 0) {
-                      # Ambil chat_id dari update terakhir
                       $latestUpdate = $updates.result[-1]
                       $chatId = $latestUpdate.message.chat.id
                       
-                      # Kirim pesan ke chat_id tersebut
-                      $sendBody = @{
-                          chat_id = $chatId
-                          text = $message
-                          parse_mode = "Markdown"
-                      } | ConvertTo-Json -Compress
-                      
-                      $sendResult = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -Body $sendBody -ContentType "application/json"
-                      
-                      if ($sendResult.ok) {
-                          Write-Host "✅ Info RDP terkirim ke Telegram! (Chat ID: $chatId)"
-                      } else {
-                          Write-Warning "⚠️ Gagal kirim pesan Telegram"
-                      }
+                      $sendUrl = "https://api.telegram.org/bot$botToken/sendMessage?chat_id=$chatId&text=$message"
+                      Invoke-RestMethod -Uri $sendUrl -Method Get
+                      Write-Host "Info RDP terkirim ke Telegram! (Chat ID: $chatId)"
                   } else {
-                      Write-Warning "⚠️ Tidak ada update dari bot. Pastikan user sudah start bot Telegram."
-                      Write-Host "💡 Kirim pesan /start ke bot Telegram terlebih dahulu"
+                      Write-Warning "Tidak ada update dari bot. Kirim /start ke bot Telegram dulu."
                   }
               } catch {
-                  Write-Warning "⚠️ Gagal kirim ke Telegram: $_"
-                  Write-Host "💡 Pastikan TELEGRAM_BOT_TOKEN sudah benar di Secrets"
+                  Write-Warning "Gagal kirim ke Telegram: $_"
               }
           } else {
-              Write-Host "⚠️ TELEGRAM_BOT_TOKEN tidak ditemukan di Secrets"
+              Write-Host "TELEGRAM_BOT_TOKEN tidak ditemukan di Secrets"
           }
 
-      - name: 1️⃣2️⃣ MAINTAIN CONNECTION
+      - name: 12 MAINTAIN CONNECTION
+        shell: pwsh
         run: |
           # Hitung durasi (maksimal 6 jam)
           $durasiInput = "${{ github.event.inputs.duration }}"
@@ -444,16 +402,15 @@ jobs:
           }
           $totalDetik = $jam * 3600
           
-          Write-Host "╔══════════════════════════════════════════════════╗"
-          Write-Host "║                                                  ║"
-          Write-Host "║           MAINTAIN CONNECTION                   ║"
-          Write-Host "║        MENJAGA RDP TETAP AKTIF                 ║"
-          Write-Host "║                                                  ║"
-          Write-Host "╚══════════════════════════════════════════════════╝"
           Write-Host ""
-          Write-Host "🟢 RDP sedang berjalan..."
-          Write-Host "⏱️  Durasi: $jam Jam ($totalDetik detik)"
-          Write-Host "🔴 Tekan Cancel untuk menghentikan"
+          Write-Host "======================================================"
+          Write-Host "           MAINTAIN CONNECTION"
+          Write-Host "        MENJAGA RDP TETAP AKTIF"
+          Write-Host "======================================================"
+          Write-Host ""
+          Write-Host "RDP sedang berjalan..."
+          Write-Host "Durasi: $jam Jam ($totalDetik detik)"
+          Write-Host "Tekan Cancel untuk menghentikan"
           Write-Host ""
           
           $startTime = Get-Date
@@ -465,21 +422,21 @@ jobs:
               
               if ($timeLeft.TotalSeconds -le 0) {
                   Write-Host ""
-                  Write-Host "╔══════════════════════════════════════════════════╗"
-                  Write-Host "║     ⏰ WAKTU HABIS - RDP DIMATIKAN             ║"
-                  Write-Host "╚══════════════════════════════════════════════════╝"
+                  Write-Host "======================================================"
+                  Write-Host "     WAKTU HABIS - RDP DIMATIKAN"
+                  Write-Host "======================================================"
                   Write-Host ""
                   
-                  # Kirim notifikasi RDP mati ke Telegram
+                  # Kirim notif ke Telegram
                   $botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
                   if ($botToken -ne '') {
                       try {
                           $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates" -Method Get
                           if ($updates.ok -and $updates.result.Count -gt 0) {
                               $chatId = $updates.result[-1].message.chat.id
-                              $endMsg = "⚠️ *RDP Telah Mati*\n\n⏰ Durasi $jam jam telah habis.\n🔄 Jalankan ulang untuk membuat sesi baru."
-                              $endBody = @{chat_id=$chatId; text=$endMsg; parse_mode="Markdown"} | ConvertTo-Json -Compress
-                              Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -Body $endBody -ContentType "application/json"
+                              $endMsg = "RDP Telah Mati%0A%0ADurasi $jam jam telah habis.%0AJalankan ulang untuk membuat sesi baru."
+                              $endUrl = "https://api.telegram.org/bot$botToken/sendMessage?chat_id=$chatId&text=$endMsg"
+                              Invoke-RestMethod -Uri $endUrl -Method Get
                           }
                       } catch {}
                   }
@@ -491,6 +448,6 @@ jobs:
               $minutes = $timeLeft.Minutes
               $seconds = $timeLeft.Seconds
               
-              Write-Host "[$($currentTime.ToString('HH:mm:ss'))] 🟢 Aktif | ⏳ Sisa: $hours jam $minutes menit $seconds detik"
+              Write-Host "[$($currentTime.ToString('HH:mm:ss'))] Aktif | Sisa: $hours jam $minutes menit $seconds detik"
               Start-Sleep -Seconds 300
           }
