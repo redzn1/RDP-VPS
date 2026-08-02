@@ -16,7 +16,7 @@ on:
         required: false
         default: '6'
       tailscale_key:
-        description: 'Tailscale Auth Key (kosongkan untuk pakai secret default)'
+        description: 'Tailscale Key'
         required: false
         default: ''
 
@@ -128,13 +128,11 @@ jobs:
           $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
           Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
 
-          # Set Wallpaper via Policy
           $policyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
           if (!(Test-Path $policyPath)) { New-Item -Path $policyPath -Force }
           Set-ItemProperty -Path $policyPath -Name "Wallpaper" -Value $imagePath -Force
           Set-ItemProperty -Path $policyPath -Name "WallpaperStyle" -Value "2" -Force
 
-          # Set Lock Screen
           $persPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
           if (!(Test-Path $persPath)) { New-Item -Path $persPath -Force }
           Set-ItemProperty -Path $persPath -Name "LockScreenImage" -Value $imagePath -Force
@@ -164,7 +162,6 @@ jobs:
           
           Write-Host "🖼️ Mengganti profile picture untuk semua user..."
           
-          # Copy ke semua ukuran yang diperlukan Windows
           $sizes = @(
               @{Name="user.png"; Size=448},
               @{Name="user-32.png"; Size=32},
@@ -182,7 +179,6 @@ jobs:
               }
           }
           
-          # Copy juga dalam format .bmp dan .jpg untuk kompatibilitas
           try {
               Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.bmp" -Force
               Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.jpg" -Force
@@ -191,7 +187,6 @@ jobs:
               Write-Warning "  ⚠️ Gagal copy format tambahan"
           }
           
-          # Refresh Explorer untuk menerapkan perubahan
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
           Start-Process explorer -ErrorAction SilentlyContinue
@@ -333,26 +328,29 @@ jobs:
           }
           Write-Host "✅ Port 3389 terbuka, RDP siap."
 
-      - name: 1️⃣1️⃣ INFORMASI RDP
+      - name: 1️⃣1️⃣ INFORMASI RDP & KIRIM TELEGRAM
+        shell: pwsh
         run: |
           $ip = $env:TAILSCALE_IP
           $user = "${{ github.event.inputs.username }}"
           $pass = "${{ github.event.inputs.password }}"
           
-          # Hitung durasi
+          # Hitung durasi (maksimal 6 jam)
           $durasiInput = "${{ github.event.inputs.duration }}"
           if ($durasiInput -eq '' -or $durasiInput -eq '0') {
               $jam = 6
           } else {
               try {
                   $jam = [int]$durasiInput
-                  if ($jam -lt 1) { $jam = 6 }
+                  if ($jam -lt 1) { $jam = 1 }
+                  if ($jam -gt 6) { $jam = 6 }
               } catch {
                   $jam = 6
               }
           }
           $menit = $jam * 60
           
+          # Tampilkan di log Actions
           Write-Host ""
           Write-Host "╔══════════════════════════════════════════════════╗"
           Write-Host "║                                                  ║"
@@ -371,21 +369,75 @@ jobs:
           Write-Host "🔗 Hubungkan ke Remote Desktop Connection"
           Write-Host "📱 Gunakan IP Tailscale di atas"
           Write-Host ""
+          
+          # Kirim ke Telegram via getUpdates (tanpa chat ID)
+          $botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          
+          if ($botToken -ne '') {
+              Write-Host "📤 Mengirim info ke Telegram..."
+              
+              # Format pesan
+              $message = @"
+╔══════════════════════════════════╗
+║   🖥️ *WINDOWS SERVER 2025*     ║
+╚══════════════════════════════════╝
+
+🌍 *IP Tailscale:* `$ip`
+👤 *User 1:* `$user`
+👤 *User 2:* `runneradmin`
+🔑 *Password:* `$pass`
+⏱️ *Durasi:* $jam Jam ($menit Menit)
+
+🔗 Hubungkan ke RD Client
+📱 Gunakan IP Tailscale di atas
+"@
+              
+              try {
+                  # Ambil updates terbaru untuk dapatkan chat_id dari user yang start
+                  $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates" -Method Get
+                  
+                  if ($updates.ok -and $updates.result.Count -gt 0) {
+                      # Ambil chat_id dari update terakhir
+                      $latestUpdate = $updates.result[-1]
+                      $chatId = $latestUpdate.message.chat.id
+                      
+                      # Kirim pesan ke chat_id tersebut
+                      $sendBody = @{
+                          chat_id = $chatId
+                          text = $message
+                          parse_mode = "Markdown"
+                      } | ConvertTo-Json -Compress
+                      
+                      $sendResult = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -Body $sendBody -ContentType "application/json"
+                      
+                      if ($sendResult.ok) {
+                          Write-Host "✅ Info RDP terkirim ke Telegram! (Chat ID: $chatId)"
+                      } else {
+                          Write-Warning "⚠️ Gagal kirim pesan Telegram"
+                      }
+                  } else {
+                      Write-Warning "⚠️ Tidak ada update dari bot. Pastikan user sudah start bot Telegram."
+                      Write-Host "💡 Kirim pesan /start ke bot Telegram terlebih dahulu"
+                  }
+              } catch {
+                  Write-Warning "⚠️ Gagal kirim ke Telegram: $_"
+                  Write-Host "💡 Pastikan TELEGRAM_BOT_TOKEN sudah benar di Secrets"
+              }
+          } else {
+              Write-Host "⚠️ TELEGRAM_BOT_TOKEN tidak ditemukan di Secrets"
+          }
 
       - name: 1️⃣2️⃣ MAINTAIN CONNECTION
         run: |
-          $ip = $env:TAILSCALE_IP
-          $user = "${{ github.event.inputs.username }}"
-          $pass = "${{ github.event.inputs.password }}"
-          
-          # Hitung durasi
+          # Hitung durasi (maksimal 6 jam)
           $durasiInput = "${{ github.event.inputs.duration }}"
           if ($durasiInput -eq '' -or $durasiInput -eq '0') {
               $jam = 6
           } else {
               try {
                   $jam = [int]$durasiInput
-                  if ($jam -lt 1) { $jam = 6 }
+                  if ($jam -lt 1) { $jam = 1 }
+                  if ($jam -gt 6) { $jam = 6 }
               } catch {
                   $jam = 6
               }
@@ -417,6 +469,21 @@ jobs:
                   Write-Host "║     ⏰ WAKTU HABIS - RDP DIMATIKAN             ║"
                   Write-Host "╚══════════════════════════════════════════════════╝"
                   Write-Host ""
+                  
+                  # Kirim notifikasi RDP mati ke Telegram
+                  $botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+                  if ($botToken -ne '') {
+                      try {
+                          $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates" -Method Get
+                          if ($updates.ok -and $updates.result.Count -gt 0) {
+                              $chatId = $updates.result[-1].message.chat.id
+                              $endMsg = "⚠️ *RDP Telah Mati*\n\n⏰ Durasi $jam jam telah habis.\n🔄 Jalankan ulang untuk membuat sesi baru."
+                              $endBody = @{chat_id=$chatId; text=$endMsg; parse_mode="Markdown"} | ConvertTo-Json -Compress
+                              Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -Body $endBody -ContentType "application/json"
+                          }
+                      } catch {}
+                  }
+                  
                   break
               }
               
