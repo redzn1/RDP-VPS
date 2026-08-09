@@ -26,64 +26,15 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Install Virtual Display Driver
+      - name: Skip Virtual Display Driver
         shell: pwsh
         run: |
           Write-Host "=============================================="
-          Write-Host "     MEMASANG VIRTUAL DISPLAY DRIVER"
+          Write-Host "     SKIP VIRTUAL DISPLAY DRIVER"
           Write-Host "=============================================="
-
-          $destDir = "C:\virtualgpu"
-          if (Test-Path $destDir) { Remove-Item -Path $destDir -Recurse -Force }
-          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-
-          $zipPath = "$env:TEMP\usbmmidd.zip"
-          
-          $urls = @(
-              "https://github.com/ge9/IddSampleDriver/releases/download/0.0.1.0/IddSampleDriver.zip",
-              "https://www.amyuni.com/downloads/usbmmidd_v2.zip"
-          )
-          
-          $downloaded = $false
-          foreach ($url in $urls) {
-              try {
-                  Write-Host "Download dari: $url"
-                  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-                  Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 60
-                  $downloaded = $true
-                  break
-              } catch {
-                  Write-Warning "Gagal: $_"
-              }
-          }
-          
-          if (-not $downloaded) {
-              Write-Warning "Tidak bisa download driver, skip virtual display..."
-              Write-Host "RDP tetap berfungsi tanpa virtual GPU."
-              exit 0
-          }
-          
-          Expand-Archive -Path $zipPath -DestinationPath $destDir -Force
-          
-          $installerExe = Get-ChildItem -Path $destDir -Recurse -Name "deviceinstaller64.exe" -ErrorAction SilentlyContinue
-          if (-not $installerExe) {
-              $installerExe = Get-ChildItem -Path $destDir -Recurse -Name "deviceinstaller.exe" -ErrorAction SilentlyContinue
-          }
-          
-          if (-not $installerExe) {
-              Write-Warning "Installer tidak ditemukan, skip."
-              exit 0
-          }
-          
-          $installerPath = Join-Path $destDir $installerExe
-          $driverInf = Get-ChildItem -Path $destDir -Recurse -Name "*.inf" | Select-Object -First 1
-          
-          Write-Host "Menginstal driver..."
-          Set-Location (Split-Path $installerPath)
-          & $installerPath install $driverInf usbmmidd
-          & $installerPath enableidd 0
-          
-          Write-Host "Virtual display driver selesai."
+          Write-Host "Windows Server 2025 mendukung RDP tanpa virtual display."
+          Write-Host "Melanjutkan setup..."
+          exit 0
 
       - name: Configure Core RDP Settings
         shell: pwsh
@@ -144,7 +95,12 @@ jobs:
           Write-Host "=============================================="
           $imageUrl = "https://images5.alphacoders.com/129/thumb-1920-1294333.png"
           $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
-          Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
+          try {
+              Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
+          } catch {
+              Write-Warning "Gagal download wallpaper, skip."
+              exit 0
+          }
 
           $policyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
           if (!(Test-Path $policyPath)) { New-Item -Path $policyPath -Force }
@@ -168,16 +124,12 @@ jobs:
           $profilePicPath = "$env:TEMP\profile_pic.jpg"
           $userPicDir = "C:\ProgramData\Microsoft\User Account Pictures"
           
-          Write-Host "Mendownload profile picture..."
           try {
               Invoke-WebRequest -Uri $profilePicUrl -OutFile $profilePicPath -UseBasicParsing
-              Write-Host "Profile picture berhasil didownload!"
           } catch {
-              Write-Warning "Gagal download profile picture, melanjutkan..."
+              Write-Warning "Gagal download, skip."
               exit 0
           }
-          
-          Write-Host "Mengganti profile picture untuk semua user..."
           
           Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.png" -Force
           Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-32.png" -Force
@@ -254,8 +206,6 @@ jobs:
           Write-Host "   INSTALL CHROME DAN SET DEFAULT BROWSER"
           Write-Host "=============================================="
           
-          # Download dan install Chrome
-          Write-Host "Menginstall Google Chrome..."
           $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
           $chromeInstaller = "$env:TEMP\chrome_installer.exe"
           
@@ -264,37 +214,14 @@ jobs:
               Start-Process -FilePath $chromeInstaller -ArgumentList "/silent /install" -Wait
               Write-Host "Chrome terinstall."
           } catch {
-              Write-Warning "Gagal install Chrome: $_"
+              Write-Warning "Gagal install Chrome, skip."
               exit 0
           }
           
-          # Set Chrome sebagai default browser via registry
           Write-Host "Mengatur Chrome sebagai default browser..."
-          
-          $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-          $chromePath86 = "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-          
-          if (Test-Path $chromePath) {
-              $chromeExe = $chromePath
-          } elseif (Test-Path $chromePath86) {
-              $chromeExe = $chromePath86
-          } else {
-              Write-Warning "Chrome.exe tidak ditemukan."
-              exit 0
-          }
-          
-          # Set registry untuk default browser
-          $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
-          if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force }
-          
-          # Set default associations
           $assocPath = "HKLM:\SOFTWARE\RegisteredApplications"
           Set-ItemProperty -Path $assocPath -Name "Google Chrome" -Value "Software\Clients\StartMenuInternet\Google Chrome\Capabilities" -Force
           
-          # Buat Chrome default untuk HTTP dan HTTPS
-          $chromeProgId = "ChromeHTML"
-          
-          # Register Chrome
           $chromeCapPath = "HKLM:\SOFTWARE\Clients\StartMenuInternet\Google Chrome\Capabilities"
           if (!(Test-Path $chromeCapPath)) { New-Item -Path $chromeCapPath -Force }
           Set-ItemProperty -Path $chromeCapPath -Name "ApplicationDescription" -Value "Google Chrome" -Force
@@ -302,22 +229,11 @@ jobs:
           
           $urlAssocPath = "$chromeCapPath\URLAssociations"
           if (!(Test-Path $urlAssocPath)) { New-Item -Path $urlAssocPath -Force }
-          Set-ItemProperty -Path $urlAssocPath -Name "http" -Value $chromeProgId -Force
-          Set-ItemProperty -Path $urlAssocPath -Name "https" -Value $chromeProgId -Force
-          Set-ItemProperty -Path $urlAssocPath -Name "ftp" -Value $chromeProgId -Force
-          
-          # Set default via PowerShell
-          try {
-              $chromePathShort = [System.Environment]::GetFolderPath('Programs') + "\Google Chrome.lnk"
-              if (Test-Path $chromePathShort) {
-                  $wsShell = New-Object -ComObject WScript.Shell
-                  $shortcut = $wsShell.CreateShortcut($chromePathShort)
-                  Write-Host "Chrome shortcut ditemukan."
-              }
-          } catch {}
+          Set-ItemProperty -Path $urlAssocPath -Name "http" -Value "ChromeHTML" -Force
+          Set-ItemProperty -Path $urlAssocPath -Name "https" -Value "ChromeHTML" -Force
+          Set-ItemProperty -Path $urlAssocPath -Name "ftp" -Value "ChromeHTML" -Force
           
           Write-Host "Chrome berhasil diatur sebagai default browser."
-          Write-Host "Restart diperlukan untuk menerapkan sepenuhnya."
 
       - name: Install Tailscale
         shell: pwsh
@@ -347,24 +263,15 @@ jobs:
           
           if ($inputKey -ne '') {
               $authKey = $inputKey
-              Write-Host "Menggunakan Auth Key dari input manual"
           } elseif ($secretKey -ne '') {
               $authKey = $secretKey
-              Write-Host "Menggunakan Auth Key dari GitHub Secret"
           } else {
               Write-Error "Tailscale Auth Key tidak ditemukan!"
               exit 1
           }
           
-          Write-Host "Mengautentikasi dengan Auth Key..."
           & $tsPath up --auth-key $authKey --hostname=wins-25-${{ github.run_number }} --accept-dns=false
           
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Gagal autentikasi dengan Auth Key."
-              exit 1
-          }
-          
-          Write-Host "Menunggu koneksi Tailscale stabil..."
           Start-Sleep -Seconds 10
           
           $tsIP = $null
@@ -372,7 +279,6 @@ jobs:
           while (-not $tsIP -and $retries -lt 36) {
               $tsIP = & $tsPath ip -4 2>$null
               if (-not $tsIP) {
-                  Write-Host "Menunggu IP Tailscale... (percobaan $($retries+1)/36)"
                   Start-Sleep -Seconds 5
                   $retries++
               }
@@ -384,22 +290,18 @@ jobs:
           }
           
           "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Berhasil terhubung ke Tailscale!"
           Write-Host "IP Tailscale: $tsIP"
 
       - name: Verify RDP Accessibility
         shell: pwsh
         run: |
-          Write-Host "=============================================="
-          Write-Host "      MEMVERIFIKASI KONEKSI RDP"
-          Write-Host "=============================================="
           $ip = $env:TAILSCALE_IP
           $testResult = Test-NetConnection -ComputerName $ip -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "Koneksi RDP internal gagal!"
+              Write-Error "Koneksi RDP gagal!"
               exit 1
           }
-          Write-Host "Port 3389 terbuka, RDP siap."
+          Write-Host "Port 3389 terbuka."
 
       - name: INFORMASI RDP
         shell: pwsh
@@ -408,7 +310,6 @@ jobs:
           $user = "${{ github.event.inputs.username }}"
           $pass = "${{ github.event.inputs.password }}"
           
-          # Hitung durasi (maksimal 6 jam)
           $durasiInput = "${{ github.event.inputs.duration }}"
           if ($durasiInput -eq '' -or $durasiInput -eq '0') {
               $jam = 6
@@ -435,13 +336,11 @@ jobs:
           Write-Host "======================================================"
           Write-Host ""
           Write-Host "Hubungkan ke Remote Desktop Connection"
-          Write-Host "Gunakan IP Tailscale di atas"
           Write-Host ""
 
       - name: MAINTAIN CONNECTION
         shell: pwsh
         run: |
-          # Hitung durasi (maksimal 6 jam)
           $durasiInput = "${{ github.event.inputs.duration }}"
           if ($durasiInput -eq '' -or $durasiInput -eq '0') {
               $jam = 6
@@ -459,12 +358,8 @@ jobs:
           Write-Host ""
           Write-Host "======================================================"
           Write-Host "           MAINTAIN CONNECTION"
-          Write-Host "        MENJAGA RDP TETAP AKTIF"
           Write-Host "======================================================"
-          Write-Host ""
-          Write-Host "RDP sedang berjalan..."
-          Write-Host "Durasi: $jam Jam ($totalDetik detik)"
-          Write-Host "Tekan Cancel untuk menghentikan"
+          Write-Host "RDP berjalan - Durasi: $jam Jam"
           Write-Host ""
           
           $startTime = Get-Date
@@ -475,18 +370,13 @@ jobs:
               $timeLeft = $endTime - $currentTime
               
               if ($timeLeft.TotalSeconds -le 0) {
-                  Write-Host ""
-                  Write-Host "======================================================"
-                  Write-Host "     WAKTU HABIS - RDP DIMATIKAN"
-                  Write-Host "======================================================"
-                  Write-Host ""
+                  Write-Host "WAKTU HABIS - RDP DIMATIKAN"
                   break
               }
               
               $hours = [math]::Floor($timeLeft.TotalHours)
               $minutes = $timeLeft.Minutes
-              $seconds = $timeLeft.Seconds
               
-              Write-Host "[$($currentTime.ToString('HH:mm:ss'))] Aktif | Sisa: $hours jam $minutes menit $seconds detik"
+              Write-Host "[$($currentTime.ToString('HH:mm:ss'))] Aktif | Sisa: $hours jam $minutes menit"
               Start-Sleep -Seconds 300
           }
