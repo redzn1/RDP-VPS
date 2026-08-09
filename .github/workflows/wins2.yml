@@ -1,0 +1,492 @@
+name: WinS 2025 RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'Username untuk akun RDP'
+        required: true
+        default: 'Administrator'
+      password:
+        description: 'Password untuk akun RDP'
+        required: true
+        default: 'Redz132_'
+      duration:
+        description: 'Durasi RDP (jam) | Maksimal 6 jam | Kosongkan = 6 jam'
+        required: false
+        default: '6'
+      tailscale_key:
+        description: 'Tailscale Auth Key (kosongkan untuk pakai secret default)'
+        required: false
+        default: ''
+
+jobs:
+  winser-2025:
+    runs-on: windows-2025
+    timeout-minutes: 3600
+
+    steps:
+      - name: Install Virtual Display Driver
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "     MEMASANG VIRTUAL DISPLAY DRIVER"
+          Write-Host "=============================================="
+
+          $destDir = "C:\virtualgpu"
+          if (Test-Path $destDir) { Remove-Item -Path $destDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+
+          $zipPath = "$env:TEMP\usbmmidd.zip"
+          
+          $urls = @(
+              "https://github.com/ge9/IddSampleDriver/releases/download/0.0.1.0/IddSampleDriver.zip",
+              "https://www.amyuni.com/downloads/usbmmidd_v2.zip"
+          )
+          
+          $downloaded = $false
+          foreach ($url in $urls) {
+              try {
+                  Write-Host "Download dari: $url"
+                  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+                  Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 60
+                  $downloaded = $true
+                  break
+              } catch {
+                  Write-Warning "Gagal: $_"
+              }
+          }
+          
+          if (-not $downloaded) {
+              Write-Warning "Tidak bisa download driver, skip virtual display..."
+              Write-Host "RDP tetap berfungsi tanpa virtual GPU."
+              exit 0
+          }
+          
+          Expand-Archive -Path $zipPath -DestinationPath $destDir -Force
+          
+          $installerExe = Get-ChildItem -Path $destDir -Recurse -Name "deviceinstaller64.exe" -ErrorAction SilentlyContinue
+          if (-not $installerExe) {
+              $installerExe = Get-ChildItem -Path $destDir -Recurse -Name "deviceinstaller.exe" -ErrorAction SilentlyContinue
+          }
+          
+          if (-not $installerExe) {
+              Write-Warning "Installer tidak ditemukan, skip."
+              exit 0
+          }
+          
+          $installerPath = Join-Path $destDir $installerExe
+          $driverInf = Get-ChildItem -Path $destDir -Recurse -Name "*.inf" | Select-Object -First 1
+          
+          Write-Host "Menginstal driver..."
+          Set-Location (Split-Path $installerPath)
+          & $installerPath install $driverInf usbmmidd
+          & $installerPath enableidd 0
+          
+          Write-Host "Virtual display driver selesai."
+
+      - name: Configure Core RDP Settings
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "       MENGONFIGURASI RDP DAN THEMES"
+          Write-Host "=============================================="
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 2 -Force
+
+          Set-Service -Name Themes -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service -Name Themes -ErrorAction SilentlyContinue
+
+          $tsPoliciesPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+          if (!(Test-Path $tsPoliciesPath)) { New-Item -Path $tsPoliciesPath -Force }
+          Set-ItemProperty -Path $tsPoliciesPath -Name "fNoRemoteDesktopWallpaper" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fNoRemoteDesktopWallpaper" -Value 0 -Force
+
+          Remove-NetFirewallRule -DisplayName "RDP-Tailscale" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "RDP-Tailscale" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389
+
+          Restart-Service -Name TermService -Force
+          Write-Host "RDP dan Themes siap."
+
+      - name: Setup User Accounts for RDP
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "      MENYIAPKAN AKUN RDP (2 USER)"
+          Write-Host "=============================================="
+
+          $password = "${{ github.event.inputs.password }}"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          $adminUser = "${{ github.event.inputs.username }}"
+          if (Get-LocalUser -Name $adminUser -ErrorAction SilentlyContinue) {
+              Write-Host "Menghapus user $adminUser yang sudah ada..."
+              Remove-LocalUser -Name $adminUser -ErrorAction Stop
+          }
+          New-LocalUser -Name $adminUser -Password $securePass -PasswordNeverExpires:$true
+          Add-LocalGroupMember -Group "Administrators" -Member $adminUser -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $adminUser
+          Set-LocalUser -Name $adminUser -PasswordNeverExpires:$true -AccountNeverExpires:$true
+          Write-Host "$adminUser siap."
+
+          $runnerUser = "runneradmin"
+          Set-LocalUser -Name $runnerUser -Password $securePass -PasswordNeverExpires:$true -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $runnerUser -ErrorAction SilentlyContinue
+          Write-Host "runneradmin password diupdate."
+          Write-Host "Semua user menggunakan password yang sama."
+
+      - name: Set Custom Wallpaper and Lock Screen
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "   MENGATUR WALLPAPER DAN LOCK SCREEN"
+          Write-Host "=============================================="
+          $imageUrl = "https://images5.alphacoders.com/129/thumb-1920-1294333.png"
+          $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
+          Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
+
+          $policyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+          if (!(Test-Path $policyPath)) { New-Item -Path $policyPath -Force }
+          Set-ItemProperty -Path $policyPath -Name "Wallpaper" -Value $imagePath -Force
+          Set-ItemProperty -Path $policyPath -Name "WallpaperStyle" -Value "2" -Force
+
+          $persPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
+          if (!(Test-Path $persPath)) { New-Item -Path $persPath -Force }
+          Set-ItemProperty -Path $persPath -Name "LockScreenImage" -Value $imagePath -Force
+
+          Write-Host "Wallpaper dan Lock Screen siap."
+
+      - name: Set Custom Profile Picture
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "     MENGATUR PROFILE PICTURE USER"
+          Write-Host "=============================================="
+          
+          $profilePicUrl = "https://d.uguu.se/fkeWNWRb.jpeg"
+          $profilePicPath = "$env:TEMP\profile_pic.jpg"
+          $userPicDir = "C:\ProgramData\Microsoft\User Account Pictures"
+          
+          Write-Host "Mendownload profile picture..."
+          try {
+              Invoke-WebRequest -Uri $profilePicUrl -OutFile $profilePicPath -UseBasicParsing
+              Write-Host "Profile picture berhasil didownload!"
+          } catch {
+              Write-Warning "Gagal download profile picture, melanjutkan..."
+              exit 0
+          }
+          
+          Write-Host "Mengganti profile picture untuk semua user..."
+          
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-32.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-40.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-48.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user-192.png" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.bmp" -Force
+          Copy-Item -Path $profilePicPath -Destination "$userPicDir\user.jpg" -Force
+          
+          Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          Start-Process explorer -ErrorAction SilentlyContinue
+          
+          Write-Host "Profile picture berhasil diganti!"
+
+      - name: Create Logon Startup Script
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "   MEMBUAT SCRIPT LOGON WALLPAPER"
+          Write-Host "=============================================="
+          $scriptPath = "C:\Windows\set_wallpaper.ps1"
+          @'
+          Start-Sleep -Seconds 3
+          $imagePath = "C:\Windows\Web\Wallpaper\custom_image.png"
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "Wallpaper" -Value $imagePath -Force
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "WallpaperStyle" -Value "2" -Force
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "TileWallpaper" -Value "0" -Force
+          Add-Type -TypeDefinition @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class Wallpaper {
+              [DllImport("user32.dll", CharSet = CharSet.Auto)]
+              public static extern int SystemParametersInfo(int uAction, int uParam, string lvParam, int fuWinIni);
+          }
+          "@
+          [Wallpaper]::SystemParametersInfo(20, 0, $imagePath, 3)
+          $userDesktop = [Environment]::GetFolderPath("Desktop")
+          if (Test-Path $userDesktop) {
+              Get-ChildItem -Path $userDesktop -File | Where-Object {
+                  $_.Extension -in @(".lnk", ".url") -and 
+                  $_.Name -notlike "*Chrome*" -and 
+                  $_.Name -notlike "*Edge*"
+              } | Remove-Item -Force -ErrorAction SilentlyContinue
+          }
+          Stop-Process -Name explorer -Force
+          '@ | Out-File -FilePath $scriptPath -Encoding utf8 -Force
+          
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "SetCustomWallpaper" -Value "PowerShell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\set_wallpaper.ps1" -Force
+          Write-Host "Script logon terpasang."
+
+      - name: Clean Global Desktop Shortcuts
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "     MEMBERSIHKAN SHORTCUT PUBLIK"
+          Write-Host "=============================================="
+          $desktopPaths = @("C:\Users\Public\Desktop", "C:\Users\Default\Desktop")
+          foreach ($path in $desktopPaths) {
+              if (Test-Path $path) {
+                  Get-ChildItem -Path $path -File | Where-Object {
+                      $_.Extension -in @(".lnk", ".url") -and 
+                      $_.Name -notlike "*Chrome*" -and 
+                      $_.Name -notlike "*Edge*"
+                  } | Remove-Item -Force -ErrorAction SilentlyContinue
+              }
+          }
+          Write-Host "Desktop publik bersih."
+
+      - name: Install Google Chrome and Set as Default Browser
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "   INSTALL CHROME DAN SET DEFAULT BROWSER"
+          Write-Host "=============================================="
+          
+          # Download dan install Chrome
+          Write-Host "Menginstall Google Chrome..."
+          $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
+          $chromeInstaller = "$env:TEMP\chrome_installer.exe"
+          
+          try {
+              Invoke-WebRequest -Uri $chromeUrl -OutFile $chromeInstaller -UseBasicParsing
+              Start-Process -FilePath $chromeInstaller -ArgumentList "/silent /install" -Wait
+              Write-Host "Chrome terinstall."
+          } catch {
+              Write-Warning "Gagal install Chrome: $_"
+              exit 0
+          }
+          
+          # Set Chrome sebagai default browser via registry
+          Write-Host "Mengatur Chrome sebagai default browser..."
+          
+          $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          $chromePath86 = "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+          
+          if (Test-Path $chromePath) {
+              $chromeExe = $chromePath
+          } elseif (Test-Path $chromePath86) {
+              $chromeExe = $chromePath86
+          } else {
+              Write-Warning "Chrome.exe tidak ditemukan."
+              exit 0
+          }
+          
+          # Set registry untuk default browser
+          $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+          if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force }
+          
+          # Set default associations
+          $assocPath = "HKLM:\SOFTWARE\RegisteredApplications"
+          Set-ItemProperty -Path $assocPath -Name "Google Chrome" -Value "Software\Clients\StartMenuInternet\Google Chrome\Capabilities" -Force
+          
+          # Buat Chrome default untuk HTTP dan HTTPS
+          $chromeProgId = "ChromeHTML"
+          
+          # Register Chrome
+          $chromeCapPath = "HKLM:\SOFTWARE\Clients\StartMenuInternet\Google Chrome\Capabilities"
+          if (!(Test-Path $chromeCapPath)) { New-Item -Path $chromeCapPath -Force }
+          Set-ItemProperty -Path $chromeCapPath -Name "ApplicationDescription" -Value "Google Chrome" -Force
+          Set-ItemProperty -Path $chromeCapPath -Name "ApplicationName" -Value "Google Chrome" -Force
+          
+          $urlAssocPath = "$chromeCapPath\URLAssociations"
+          if (!(Test-Path $urlAssocPath)) { New-Item -Path $urlAssocPath -Force }
+          Set-ItemProperty -Path $urlAssocPath -Name "http" -Value $chromeProgId -Force
+          Set-ItemProperty -Path $urlAssocPath -Name "https" -Value $chromeProgId -Force
+          Set-ItemProperty -Path $urlAssocPath -Name "ftp" -Value $chromeProgId -Force
+          
+          # Set default via PowerShell
+          try {
+              $chromePathShort = [System.Environment]::GetFolderPath('Programs') + "\Google Chrome.lnk"
+              if (Test-Path $chromePathShort) {
+                  $wsShell = New-Object -ComObject WScript.Shell
+                  $shortcut = $wsShell.CreateShortcut($chromePathShort)
+                  Write-Host "Chrome shortcut ditemukan."
+              }
+          } catch {}
+          
+          Write-Host "Chrome berhasil diatur sebagai default browser."
+          Write-Host "Restart diperlukan untuk menerapkan sepenuhnya."
+
+      - name: Install Tailscale
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "        MENGINSTALL TAILSCALE"
+          Write-Host "=============================================="
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+          Start-Sleep -Seconds 5
+          Write-Host "Tailscale terinstal."
+
+      - name: Tailscale Auth Key Login
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "     LOGIN TAILSCALE DENGAN AUTH KEY"
+          Write-Host "=============================================="
+          
+          $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          
+          $inputKey = "${{ github.event.inputs.tailscale_key }}"
+          $secretKey = "${{ secrets.TS_WIN_KEY }}"
+          
+          if ($inputKey -ne '') {
+              $authKey = $inputKey
+              Write-Host "Menggunakan Auth Key dari input manual"
+          } elseif ($secretKey -ne '') {
+              $authKey = $secretKey
+              Write-Host "Menggunakan Auth Key dari GitHub Secret"
+          } else {
+              Write-Error "Tailscale Auth Key tidak ditemukan!"
+              exit 1
+          }
+          
+          Write-Host "Mengautentikasi dengan Auth Key..."
+          & $tsPath up --auth-key $authKey --hostname=wins-25-${{ github.run_number }} --accept-dns=false
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Gagal autentikasi dengan Auth Key."
+              exit 1
+          }
+          
+          Write-Host "Menunggu koneksi Tailscale stabil..."
+          Start-Sleep -Seconds 10
+          
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 36) {
+              $tsIP = & $tsPath ip -4 2>$null
+              if (-not $tsIP) {
+                  Write-Host "Menunggu IP Tailscale... (percobaan $($retries+1)/36)"
+                  Start-Sleep -Seconds 5
+                  $retries++
+              }
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "Tidak bisa mendapatkan IP Tailscale."
+              exit 1
+          }
+          
+          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Berhasil terhubung ke Tailscale!"
+          Write-Host "IP Tailscale: $tsIP"
+
+      - name: Verify RDP Accessibility
+        shell: pwsh
+        run: |
+          Write-Host "=============================================="
+          Write-Host "      MEMVERIFIKASI KONEKSI RDP"
+          Write-Host "=============================================="
+          $ip = $env:TAILSCALE_IP
+          $testResult = Test-NetConnection -ComputerName $ip -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "Koneksi RDP internal gagal!"
+              exit 1
+          }
+          Write-Host "Port 3389 terbuka, RDP siap."
+
+      - name: INFORMASI RDP
+        shell: pwsh
+        run: |
+          $ip = $env:TAILSCALE_IP
+          $user = "${{ github.event.inputs.username }}"
+          $pass = "${{ github.event.inputs.password }}"
+          
+          # Hitung durasi (maksimal 6 jam)
+          $durasiInput = "${{ github.event.inputs.duration }}"
+          if ($durasiInput -eq '' -or $durasiInput -eq '0') {
+              $jam = 6
+          } else {
+              try {
+                  $jam = [int]$durasiInput
+                  if ($jam -lt 1) { $jam = 1 }
+                  if ($jam -gt 6) { $jam = 6 }
+              } catch {
+                  $jam = 6
+              }
+          }
+          $menit = $jam * 60
+          
+          Write-Host ""
+          Write-Host "======================================================"
+          Write-Host "              INFORMASI RDP"
+          Write-Host "======================================================"
+          Write-Host "  IP Tailscale : $ip"
+          Write-Host "  User 1       : $user"
+          Write-Host "  User 2       : runneradmin"
+          Write-Host "  Password     : $pass"
+          Write-Host "  Durasi       : $jam Jam ($menit Menit)"
+          Write-Host "======================================================"
+          Write-Host ""
+          Write-Host "Hubungkan ke Remote Desktop Connection"
+          Write-Host "Gunakan IP Tailscale di atas"
+          Write-Host ""
+
+      - name: MAINTAIN CONNECTION
+        shell: pwsh
+        run: |
+          # Hitung durasi (maksimal 6 jam)
+          $durasiInput = "${{ github.event.inputs.duration }}"
+          if ($durasiInput -eq '' -or $durasiInput -eq '0') {
+              $jam = 6
+          } else {
+              try {
+                  $jam = [int]$durasiInput
+                  if ($jam -lt 1) { $jam = 1 }
+                  if ($jam -gt 6) { $jam = 6 }
+              } catch {
+                  $jam = 6
+              }
+          }
+          $totalDetik = $jam * 3600
+          
+          Write-Host ""
+          Write-Host "======================================================"
+          Write-Host "           MAINTAIN CONNECTION"
+          Write-Host "        MENJAGA RDP TETAP AKTIF"
+          Write-Host "======================================================"
+          Write-Host ""
+          Write-Host "RDP sedang berjalan..."
+          Write-Host "Durasi: $jam Jam ($totalDetik detik)"
+          Write-Host "Tekan Cancel untuk menghentikan"
+          Write-Host ""
+          
+          $startTime = Get-Date
+          $endTime = $startTime.AddSeconds($totalDetik)
+          
+          while ($true) {
+              $currentTime = Get-Date
+              $timeLeft = $endTime - $currentTime
+              
+              if ($timeLeft.TotalSeconds -le 0) {
+                  Write-Host ""
+                  Write-Host "======================================================"
+                  Write-Host "     WAKTU HABIS - RDP DIMATIKAN"
+                  Write-Host "======================================================"
+                  Write-Host ""
+                  break
+              }
+              
+              $hours = [math]::Floor($timeLeft.TotalHours)
+              $minutes = $timeLeft.Minutes
+              $seconds = $timeLeft.Seconds
+              
+              Write-Host "[$($currentTime.ToString('HH:mm:ss'))] Aktif | Sisa: $hours jam $minutes menit $seconds detik"
+              Start-Sleep -Seconds 300
+          }
