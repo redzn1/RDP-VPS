@@ -1,4 +1,4 @@
-name: WinS 2025 RDP
+name: WinS 2025 RDP v2
 
 on:
   workflow_dispatch:
@@ -120,7 +120,7 @@ jobs:
           Write-Host "     MENGATUR PROFILE PICTURE USER"
           Write-Host "=============================================="
           
-          $profilePicUrl = "https://d.uguu.se/fkeWNWRb.jpeg"
+          $profilePicUrl = "https://ibb.co.com/hJf9zKtr"
           $profilePicPath = "$env:TEMP\profile_pic.jpg"
           $userPicDir = "C:\ProgramData\Microsoft\User Account Pictures"
           
